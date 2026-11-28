@@ -6,7 +6,7 @@ import {afterAll, beforeAll, expect, test, vi} from "vitest";
 import {createHash, randomUUID} from "node:crypto";
 import {SQL} from "../../core/src/runtime/postgres.ts";
 import type { CapitalEvent } from "../../capital/src/index.ts";
-import {SimClock, MINUTE, DAY} from "@thenetwork/core";
+import {CITY_TZ, SimClock, MINUTE, DAY, fromLocal} from "@thenetwork/core";
 import {applySchema, DEV_PG_PORT} from "../../db/dev-pg.ts";
 import {APPS, type AppInfo} from "../../platform/src/apps.ts";
 import {svcSign} from "../../core/src/svc/svc-auth.ts";
@@ -325,6 +325,77 @@ test("signed travel stores one coarse trip in the routed app and never guesses m
   expect(await lockedReplay.json()).toEqual({ error: "turn_travel_account_changed", retryable: false });
 }, 60_000);
 
+// spec/travelPresence.md, "Tell the Network my travel dates"; spec/product/stories.md F26
+test("a trip cancellation text removes the saved trip", async () => {
+  const phone = "+12125550211", otherPhone = "+12125550212", strangerPhone = "+12125550213", app = APPS.friends;
+  const join = async (e164: string) => {
+    await service.accounts.invite(app, e164);
+    const person = (await service.accounts.personFor(e164))!;
+    const joined = await service.accounts.join(app, { e164, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    if (!joined.ok) throw new Error(joined.error);
+    return joined.membership.memberId;
+  };
+  const memberId = await join(phone);
+  const otherId = await join(otherPhone);
+  const day = (offset: number) => new Date(clock.now() + offset * DAY).toISOString().slice(0, 10);
+  const tripsOf = (id: string) => sql`select city from network.presence where app_id=${app.id}
+    and member_id=${id} and type='temporary' order by city`;
+  const declare = (id: string, text: string) => post(turn(id, phone, text, "friends"));
+  const chicago = `I will be in Chicago from ${day(20)} until ${day(22)}.`;
+  expect((await (await declare("travel-cancel-save", chicago)).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await post(turn("travel-cancel-other", otherPhone, chicago, "friends"))).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declare("travel-cancel-sf", `I will be in San Francisco from ${day(30)} until ${day(32)}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declare("travel-cancel-chicago-again", `I will be in Chicago from ${day(40)} until ${day(42)}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  expect(await tripsOf(memberId)).toEqual([{ city: "chicago" }, { city: "chicago" }, { city: "sf" }]);
+  const strangerCancel = await post(turn("travel-cancel-stranger", strangerPhone, "my trip to Chicago is cancelled", "friends"));
+  expect(strangerCancel.status).toBe(200);
+  expect(await strangerCancel.json()).toMatchObject({ outcome: "handled", reason: "travel_presence", replies: [] });
+  expect(await service.accounts.personFor(strangerPhone)).toBeUndefined();
+  const cancelled = await declare("travel-cancel-text", "my trip to Chicago is cancelled");
+  expect(cancelled.status).toBe(200);
+  expect(await tripsOf(memberId)).toEqual([{ city: "chicago" }, { city: "sf" }]);
+  const removedReply = (await cancelled.json()).replies[0];
+  expect(removedReply).toContain("Removed");
+  expect(removedReply).toContain(day(20));
+  expect(removedReply).toContain(day(22));
+  const cancelledAgain = await declare("travel-cancel-text-again", "my trip to Chicago is cancelled");
+  expect(cancelledAgain.status).toBe(200);
+  expect(await tripsOf(memberId)).toEqual([{ city: "sf" }]);
+  expect((await cancelledAgain.json()).replies[0]).toContain(day(40));
+  expect(await tripsOf(otherId)).toEqual([{ city: "chicago" }]);
+}, 60_000);
+
+// spec/product/stories.md F20, "Text controls change permission before later sends"
+test("a quiet hours text updates the saved quiet hours", async () => {
+  const phone = "+12125550199", app = APPS.friends;
+  await joinFriendsByText(phone, "quiet-hours");
+  const quiet = async () => {
+    const [row] = await sql`select m.prefs from network.members m
+      join platform.phone_identities ph on ph.person_id=m.person_id
+      where ph.e164=${phone} and m.app_id=${app.id}`;
+    return row.prefs.quietHours;
+  };
+  expect(await quiet()).toEqual([21, 9]);
+  const say = (id: string, text: string) => { clock.advance(MINUTE); return post(turn(id, phone, text, "friends")); };
+  const later = await say("quiet-after-10", "Please don't text me after 10 pm");
+  expect(((await later.json()).replies as string[]).join(" ")).toContain("22:00");
+  expect(await quiet()).toEqual([22, 9]);
+  const earlier = await say("quiet-before-7", "don't text me before 7 am");
+  expect(((await earlier.json()).replies as string[]).join(" ")).toContain("07:00");
+  expect(await quiet()).toEqual([22, 7]);
+  const halfHour = await say("quiet-after-1030", "don't text me after 10:30 pm");
+  expect(((await halfHour.json()).replies as string[]).join(" ")).toContain("22:30 to 07:00");
+  expect(await quiet()).toEqual([22.5, 7]);
+  const keepHalfHour = await say("quiet-before-8", "don't text me before 8 am");
+  expect(((await keepHalfHour.json()).replies as string[]).join(" ")).toContain("22:30 to 08:00");
+  expect(await quiet()).toEqual([22.5, 8]);
+  const quoted = await say("quiet-quoted", "my sister said \"don't text me after 8 pm\"");
+  expect((((await quoted.json()).replies ?? []) as string[]).join(" ")).not.toContain("Quiet hours are");
+  expect(await quiet()).toEqual([22.5, 8]);
+}, 60_000);
+
 test("a saved travel window keeps its exact signed reply after the runtime stops", async () => {
   const phone = "+12125550173", app = APPS.friends;
   const joined = await service.accounts.join(app, { e164: phone, personId: null }, {
@@ -529,6 +600,88 @@ test("signed solo concierge offers current public listings without recruiting an
     expect((await compound.json()).reason).not.toBe("solo_events");
     expect(escaped).toBe(before);
     expect(lineSends).toHaveLength(2);
+  } finally {
+    await server.stop(true);
+    await service.close();
+    await start();
+  }
+}, 60_000);
+
+// spec/soloConcierge.md, "Get ideas for my own time": a trip away takes precedence over home city.
+test("signed solo concierge uses the trip city while the member is away", async () => {
+  await server.stop(true);
+  await service.close();
+  await start(undefined, true);
+  try {
+    const visitor = "+12125550261", away = "+12125550262";
+    const join = async (phone: string, homeCity: "nyc" | "chicago") => {
+      await service.accounts.invite(APPS.friends, phone);
+      const person = (await service.accounts.personFor(phone))!;
+      const joined = await service.accounts.join(APPS.friends, { e164: phone, personId: person.id }, {
+        firstName: "Ari", age: 20, homeCity, interests: ["nature"],
+        consent: { sms: true, wording: APPS.friends.consent.text },
+      });
+      if (!joined.ok) throw new Error("Concierge trip fixture join failed");
+      return joined.membership.memberId;
+    };
+    const visitorId = await join(visitor, "chicago");
+    const awayId = await join(away, "nyc");
+    const trip = (member: string, city: string) => sql`insert into network.presence (app_id, member_id, city, type, from_at, to_at)
+      values ('friends', ${member}, ${city}, 'temporary', ${new Date("2026-10-09T04:00:00Z")}, ${new Date("2026-10-12T04:00:00Z")})`;
+    await trip(visitorId, "nyc");
+    await trip(awayId, "chicago");
+    clock.advance(2 * MINUTE);
+    expect(await importPublicEvents(sql, clock, async () => Response.json([{
+      guid: "210", title: "Harbor nature walk", categories: "Nature | All ages", location: "McCarren Park", coordinates: "40.7206,-73.9518",
+      starttime: "2026-10-10T14:00:00", endtime: "2026-10-10T15:00:00",
+      link: { url: "https://www.nycgovparks.org/events/2026/10/10/harbor-nature-walk-210" },
+    }]))).toEqual({ published: true, events: 1 });
+    const visiting = await (await post(turn("visiting-solo-events", visitor, "Anything fun this weekend?", "friends"))).json();
+    expect(visiting).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(visiting.replies[0]).toContain("Harbor nature walk");
+    const awayAnswer = await (await post(turn("away-solo-events", away, "Anything fun this weekend?", "friends"))).json();
+    expect(awayAnswer).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(awayAnswer.replies[0]).not.toContain("Harbor nature walk");
+    expect(awayAnswer.replies[0]).not.toContain("NYC Parks");
+  } finally {
+    await server.stop(true);
+    await service.close();
+    await start();
+  }
+}, 60_000);
+
+test("signed solo concierge fallback spot uses the city at the requested start", async () => {
+  await server.stop(true);
+  await service.close();
+  await start(undefined, true);
+  try {
+    const later = "+12125550163", current = "+12125550164";
+    const join = async (phone: string) => {
+      await service.accounts.invite(APPS.friends, phone);
+      const person = (await service.accounts.personFor(phone))!;
+      const joined = await service.accounts.join(APPS.friends, { e164: phone, personId: person.id }, {
+        firstName: "Ari", age: 20, homeCity: "nyc", interests: ["nature"],
+        consent: { sms: true, wording: APPS.friends.consent.text },
+      });
+      if (!joined.ok) throw new Error("Concierge fallback fixture join failed");
+      return joined.membership.memberId;
+    };
+    const laterId = await join(later);
+    const currentId = await join(current);
+    const trip = (member: string, from: string, to: string) => sql`insert into network.presence (app_id, member_id, city, type, from_at, to_at)
+      values ('friends', ${member}, 'sf', 'temporary', ${new Date(from)}, ${new Date(to)})`;
+    await trip(laterId, "2026-10-13T04:00:00Z", "2026-10-16T04:00:00Z");
+    await trip(currentId, "2026-10-09T04:00:00Z", "2026-10-12T04:00:00Z");
+    await sql`delete from network.public_events`;
+    clock.advance(2 * MINUTE);
+    const laterAnswer = await (await post(turn("later-solo-events", later, "Find events", "friends"))).json();
+    expect(laterAnswer).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(laterAnswer.replies[0]).toContain("NYC Parks");
+    expect(laterAnswer.replies[0]).not.toContain("Ferry Building");
+    const currentAnswer = await (await post(turn("current-solo-events", current, "Find events", "friends"))).json();
+    expect(currentAnswer).toMatchObject({ outcome: "handled", app: "friends", reason: "solo_events" });
+    expect(currentAnswer.replies[0]).not.toContain("NYC Parks");
+    expect(currentAnswer.replies[0]).toContain("public spot to drop into");
   } finally {
     await server.stop(true);
     await service.close();
@@ -1431,6 +1584,10 @@ test("explicit saved-profile reads select the app without consuming onboarding o
     "Show me my Friends profile please.",
     "Read my saved Friends profile, thanks.",
     "Could you read my Friends profile? Thanks.",
+    "What's my saved profile?",
+    "What's my Friends profile?",
+    "Whats my saved profile?",
+    "Whats my Friends profile?",
   ];
   for (const [index, text] of texts.entries()) {
     if (index === 2) {
@@ -1522,6 +1679,18 @@ test("explicit saved-profile reads select the app without consuming onboarding o
   const membershipBeforeGuards = await Promise.all(
     ["friends", "slop"].map((app) => service.accounts.store.getMembership(person.id, app as "friends" | "slop")),
   );
+  for (const [index, [text, floor]] of ([
+    ["What's my profile? I'm 15.", 15],
+    ["What's my profile? I'm 15 y.o.", 15],
+    ["What's my profile, I'm 12 btw", 13],
+    ["What's on my profile? I'm 15.", 13],
+  ] as const).entries()) {
+    const compound = (await (await post(turn(`profile-compound-age-${index}`, phone, text))).json()) as any;
+    expect(compound.replies.join("\n")).not.toContain("Which profile");
+    expect(compound.replies.join("\n")).not.toContain("own number");
+    expect(compound.replies.join("\n")).not.toContain("FRIENDS_ONLY");
+    expect(await service.accounts.lowestAge(phone, person)).toBe(floor);
+  }
   await service.accounts.store.setPhoneHold(phone, "recycled_number", clock.now());
   const held = (await (await post(turn("profile-held", phone, texts[0]!))).json()) as any;
   expect(held.replies).toEqual([]);
@@ -1732,4 +1901,44 @@ test("a signed age with months projects the minor's age to other app memberships
   expect(await service.accounts.lowestAge(phone, person)).toBe(17);
   const stored = await sql`select app_id as app, age from network.members where person_id=${person.id} order by app_id`;
   expect(stored).toEqual([{ app: "friends", age: 17 }, { app: "slop", age: 17 }]);
+}, 60_000);
+
+// spec/travelPresence.md, "Tell the Network my travel dates"; spec/product/stories.md F26
+test("a corrected return date replaces the saved trip instead of leaving the old end in matching", async () => {
+  const phone = "+12125550190", otherPhone = "+12125550189", app = APPS.friends;
+  const joined = await service.accounts.join(app, { e164: phone, personId: null }, {
+    firstName: "Noor", age: 34, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(`Travel correction fixture signup failed: ${joined.error}`);
+  const otherJoined = await service.accounts.join(app, { e164: otherPhone, personId: null }, {
+    firstName: "Mina", age: 31, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!otherJoined.ok) throw new Error(`Travel correction other-member signup failed: ${otherJoined.error}`);
+  const date = (offset: number) => new Date(clock.now() + offset * DAY).toISOString().slice(0, 10);
+  const at = (value: string) => new Date(fromLocal(Number(value.slice(0, 4)), Number(value.slice(5, 7)), Number(value.slice(8, 10)), 0, CITY_TZ.sf));
+  const start = date(7), end = date(11), shortenedEnd = date(9), extendedEnd = date(10), shiftedStart = date(8);
+  const statement = (from: string, to: string) => `I will be in San Francisco from ${from} until ${to}.`;
+  const tripsFor = (memberId: string) => sql`select city, from_at, to_at from network.presence
+    where app_id=${app.id} and member_id=${memberId} and type='temporary' order by from_at, to_at`;
+  const trips = () => tripsFor(joined.membership.memberId);
+  const otherTrips = () => tripsFor(otherJoined.membership.memberId);
+  const declare = (id: string, text: string) => post(turn(id, phone, text, app.id));
+  const declareOther = (id: string, text: string) => post(turn(id, otherPhone, text, app.id));
+  expect((await (await declareOther("travel-correct-other-save", statement(start, end))).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declare("travel-correct-save", statement(start, end))).json()).replies[0]).toContain("Saved in friends.help");
+  expect(await trips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
+  expect(await otherTrips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
+  expect((await (await declare("travel-correct-shorten", statement(start, shortenedEnd))).json()).replies[0]).toContain(`until ${shortenedEnd}`);
+  expect(await trips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(shortenedEnd) }]);
+  expect(await otherTrips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
+  expect((await (await declare("travel-correct-extend", statement(start, extendedEnd))).json()).replies[0]).toContain(`until ${extendedEnd}`);
+  expect(await trips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(extendedEnd) }]);
+  expect((await (await declare("travel-correct-shift-start", statement(shiftedStart, extendedEnd))).json()).replies[0]).toContain(`from ${shiftedStart} until ${extendedEnd}`);
+  expect(await trips()).toEqual([{ city: "sf", from_at: at(shiftedStart), to_at: at(extendedEnd) }]);
+  expect(await otherTrips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
+  expect((await (await declare("travel-correct-overlap", statement(date(9), date(12)))).json()).replies[0]).toContain("Saved in friends.help");
+  expect(await trips()).toHaveLength(2);
+  expect((await (await declare("travel-correct-separate", statement(date(17), date(19)))).json()).replies[0]).toContain("Saved in friends.help");
+  expect(await trips()).toHaveLength(3);
+  expect(await otherTrips()).toEqual([{ city: "sf", from_at: at(start), to_at: at(end) }]);
 }, 60_000);

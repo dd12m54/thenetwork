@@ -10,11 +10,14 @@
 // really accepted (a simulator decision record).
 import { gini } from "@thenetwork/core";
 export { gini };
-import { CITY_TZ, canBeMatched, classifyYesNo, DAY, earliestDayKeyOf, hash32, HOUR, isAppId, isMinor as isMinorAge, latestDayKeyOf, type AgeSide, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
+import { CITY_TZ, canBeMatched, classifyYesNo, DAY, earliestDayKeyOf, hash32, HOUR, isAppId, isMinor as isMinorAge, latestDayKeyOf, timeZoneOf, type AgeSide, type AppId, type MemberId, type ParticipationState } from "@thenetwork/core";
 import { ageOnDay } from "../../../core/src/generated/memberAge.ts";
 import { groupAgeAllowed, teenReady, teenRosterSizeAllowed } from "../../../core/src/generated/friendIntroAge.ts";
 import { teenMeetingFirstMinute, teenMeetingLastMinute } from "../../../core/src/generated/teenIntroSwitch.ts";
 import { ensurePersonaStrata, type Persona } from "../persona.ts";
+import { medianOrNull, pairKey, safeDiv, topShare } from "../stats.ts";
+import type { LLMUsageSummary } from "../agent/llmAgent.ts";
+export { topShare };
 import { teenWindowAllowed } from "../teen.ts";
 import { teenFriendApp, teenFriendCategory, teenGenerator } from "../../../core/src/generated/matchLane.ts";
 import { copy } from "../../../network/src/copy.ts";
@@ -40,6 +43,7 @@ export interface MetricsOptions {
   /** Check review-before-contact even if the run logs no review events (fail closed when the network is configured with a review gate). */
   requireReview?: boolean;
   personas?: readonly Persona[];
+  llmUsage?: LLMUsageSummary;
 }
 
 export interface QualityBreakdown {
@@ -92,6 +96,7 @@ export interface Metrics {
   };
   invariants: { total: number; byRule: Record<string, number>; examples: { rule: string; detail: string }[] };
   style: { checked: number; failing: number; byRule: Record<string, number> };
+  llmUsage?: LLMUsageSummary;
   errors: number;
 }
 
@@ -106,7 +111,7 @@ const CONNECT_TYPES = new Set(["probe", "proposal", "relay", "growth_ask", "sche
 const TEEN_CONTACT_TYPES = new Set([...CONNECT_TYPES].filter(t => t !== "cancellation"));
 
 /** An inbound that only acknowledges ("thx", "ok", "sounds good") answers a logistics message, not an earlier ask. */
-const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you( then)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
+const ACK_ONLY = /^(?:ok(?:ay)?|(?=(k+))\1|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you( then)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
 /** An inbound that asks the Network for something (a member's own ask: follow-ups to it are not unsolicited). */
 const ASK = /\?|\b(looking for|i'?d (really )?(like|love)|i want|i need|can you|could you|help me|find me|anything (come|came) up|still hoping)\b/i;
 /** Wording that says someone declined or did not answer. */
@@ -122,33 +127,17 @@ function offersConnection(text: string): boolean {
   return false;
 }
 const r3 = (x: number) => Math.round(x * 1000) / 1000;
-const safeDiv = (a: number, b: number) => (b > 0 ? a / b : 0);
-const pairKey = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const hourFmt = new Map<string, Intl.DateTimeFormat>();
 function localHour(t: number, city: string): number {
-  const tz = (CITY_TZ as Record<string, string>)[city] ?? "UTC";
+  const tz = (CITY_TZ as Record<string, string>)[city] ?? timeZoneOf(city);
   let f = hourFmt.get(tz);
   if (!f) { f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", hour: "2-digit", minute: "2-digit" }); hourFmt.set(tz, f); }
   const parts = Object.fromEntries(f.formatToParts(new Date(t)).map(p => [p.type, p.value]));
   return (+parts.hour! % 24) + +parts.minute! / 60;
 }
 const inWindow = (h: number, [s, e]: [number, number]) => (s <= e ? h >= s && h < e : h >= s || h < e);
-
-/** Share of the total held by the top 10% (at least one member). */
-export function topShare(values: number[], frac = 0.1): number {
-  const xs = values.slice().sort((a, b) => b - a);
-  const sum = xs.reduce((s, x) => s + x, 0);
-  if (!sum) return 0;
-  const k = Math.max(1, Math.round(xs.length * frac));
-  return xs.slice(0, k).reduce((s, x) => s + x, 0) / sum;
-}
-const median = (xs: number[]) => {
-  if (!xs.length) return null;
-  const s = xs.slice().sort((a, b) => a - b), m = s.length >> 1;
-  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
-};
 
 /**
  * One matcher for every persona name (instead of one regex per persona per message). Full names and
@@ -638,10 +627,11 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       for (const x of oppMembers.get(oppId) ?? []) if (x !== to && !hasAccepted(x, oppId) && names.namesScoped(m.body, x))
         violate("name_before_reveal", `${m.id} to ${to} names ${x} before ${x} said yes to ${oppId}`);
     }
+    const declineBody = m.body.replace(/\bif you\b[^.!?]{0,30}\bcan'?t make\b/gi, "");
     for (const [opp, ds] of decliners) for (const x of ds) {
       if (x === to) continue;
       const inThis = opp === oppId && names.namesScoped(m.body, x);
-      const declineTalk = named.has(x) && DECLINE_WORDS.test(m.body) && (oppMembers.get(opp)?.has(to) ?? false);
+      const declineTalk = named.has(x) && DECLINE_WORDS.test(declineBody) && (oppMembers.get(opp)?.has(to) ?? false);
       if (inThis || declineTalk) violate("decliner_exposed", `${m.id} to ${to} identifies ${x}, who declined ${opp}`);
     }
     const contacts = findContactDetails(m.body);
@@ -912,7 +902,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     experience: {
       worthwhileRate: r3(safeDiv(worthwhile, judgments.length)), judged: judgments.length,
       messagesPerMemberPerWeek: r3(safeDiv(outboundCount, memberWeeks)), proactivePerMemberPerWeek: r3(safeDiv(proactiveCount, memberWeeks)),
-      timeToFirstValueDaysMedian: ttfv.length ? r3(median(ttfv)!) : null, membersWithValue: firstValue.size,
+      timeToFirstValueDaysMedian: ttfv.length ? r3(medianOrNull(ttfv)!) : null, membersWithValue: firstValue.size,
       shareWithNothing: r3(safeDiv(members.filter(id => !firstValue.has(id)).length, members.length)), optOuts: optOutAt.size,
     },
     meetings: {
@@ -928,6 +918,7 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
     },
     invariants: { total: Object.values(byRule).reduce((s, x) => s + x, 0), byRule, examples },
     style: { checked: styleChecked, failing: styleFailing, byRule: styleByRule },
+    ...(opts.llmUsage ? { llmUsage: opts.llmUsage } : {}),
     errors: records.filter(r => r.type === "network_error").length,
   };
 }
@@ -957,6 +948,7 @@ export function formatMetrics(m: Metrics): string {
     `  minorContacts=${m.safety.minorContacts} (must be 0)  undisclosedMinorProposals=${m.safety.undisclosedMinorProposals} (age-lying adversaries)`,
     `Invariants: violations=${m.invariants.total} (${kv(m.invariants.byRule)})`,
     `Style: checked=${m.style.checked} failing=${m.style.failing} (${kv(m.style.byRule)})`,
+    ...(m.llmUsage ? [`LLM usage: calls=${m.llmUsage.calls} failures=${m.llmUsage.failures} promptTok=${m.llmUsage.promptTokens} compTok=${m.llmUsage.completionTokens} reasonTok=${m.llmUsage.reasoningTokens} costUsd=$${(m.llmUsage.costMicro / 1e6).toFixed(4)} meanLatMs=${m.llmUsage.meanLatencyMs}`] : []),
     `Network errors: ${m.errors}`,
   ].join("\n");
 }

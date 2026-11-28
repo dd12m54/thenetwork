@@ -108,10 +108,16 @@ const DISPATCH_WEIGHT: Readonly<Record<string, number>> = {
   evals: 5,
 };
 
+const BLOCK_ALIASES: Readonly<Record<string, string>> = {
+  dating: "slop",
+  business: "peon",
+  friendship: "friends",
+};
+const resolveBlockName = (name: string): string => BLOCK_ALIASES[name] ?? name;
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : []));
-const only = [...new Set(values("only").map(name => name.trim()))];
-const skip = [...new Set(values("skip").map(name => name.trim()))];
+const only = [...new Set(values("only").map(name => resolveBlockName(name.trim())))];
+const skip = [...new Set(values("skip").map(name => resolveBlockName(name.trim())))];
 const unknown = [...new Set([...only, ...skip])].filter(x => !Object.hasOwn(BLOCKS, x)).map(name => name || "<empty>");
 if (unknown.length) { console.error(`unknown block: ${unknown.join(", ")}; known: ${Object.keys(BLOCKS).join(", ")}`); process.exit(2); }
 if (only.length && skip.length) { console.error("Choose --only or --skip."); process.exit(2); }
@@ -310,4 +316,9 @@ console.log(`\n${failed.length ? "FAIL" : "PASS"}: ${all.filter(g => g.blocking)
 for (const g of failed) console.error(`  FAIL [${g.block}] ${g.name}${g.detail ? `: ${g.detail.split("\n")[0]}` : ""}`);
 const out = values("json").find(Boolean);
 if (out) await writePath(out, JSON.stringify({ quick: opts.quick, blocks: run, timings, total, gates: all }, null, 1));
+await new Promise<void>(resolve => {
+  process.stdout.write("", () => {
+    process.stderr.write("", () => resolve());
+  });
+});
 process.exit(failed.length ? 1 : 0);

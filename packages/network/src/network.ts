@@ -22,20 +22,20 @@
 //    through an optional reader (capital.ts); gaming flags wait in the review queue as "fraud" items.
 import {
   ADULT_AGE, ALCOHOL_CENTRIC_CATEGORIES, ALL_SEED_VENUES, canBeMatched, canJoin, checkExternalEventT24Quorum, checkPublishExternalEvent,
-  CITY_TZ, cityTimezone, computeFollowupTimestamp, DAY, directAgreementIdiom, evaluateArrivalRelaySafe, evaluateBackupPivotV2, evaluateDensityTier,
-  evaluateExternalSourcingTrigger, evaluateFollowupSend, evaluateVenueQuarantine, evaluateVenueRedLines, fromLocal, HOUR, isCity, isLaunchCity, isMinor,
+  CITY_TZ, cityTimezone, computeFollowupTimestamp, DAY, directAgreementIdiom, evaluateArrivalRelaySafe, evaluateBackupPivotV2, evaluateContactExternalProspect, evaluateDensityTier,
+  evaluateExternalSourcingTrigger, evaluateFollowupSend, evaluateVenueQuarantine, evaluateVenueRedLines, extractMemberRedLines, fromLocal, HOUR, isBusinessDomain, isCity, isDatingDomain, isFriendshipDomain, isLaunchCity, isMinor,
   isOwnCalendarIcsUrl, isVenueOpenAt, localParts, LeakGuard, MINUTE, pickPrimaryAndBackupVenue, proposeTopOne, quoteStillOpen, rejectAndPivot, rerankTopVenuesWithLLM,
-  seedVenuesForCity, selectWorkIntroChannel, UNDER_MIN_AGE_DECLINE, validAge, venueHardEligible,
-  type Category, type City, type CityId, type DensityTier, type ExternalEventDraft, type ExternalQuorumDecision, type Facet, type Intent,
+  seedVenuesForCity, selectWorkIntroChannel, timeZoneOf, UNDER_MIN_AGE_DECLINE, validAge, venueHardEligible,
+  type Category, type City, type CityId, type ContactExternalProspectInput, type DensityTier, type ExternalEventDraft, type ExternalQuorumDecision, type Facet, type Intent,
   type LaunchCity, type LeakOptions, type LLM, type MemberId, type MemberVenuePrefs, type NetworkEvent,
   type ParticipationState, type PivotFilterOptions, type Preferences, type Presence, type PrimaryBackupVenuePick, type Proposal,
-  type ScoreComponents, type TopOneSuggestionState, type VampireTelemetry, type VenueLLMRerankResult, type VenueNoiseLevel, type VenuePriceTier, type VenueRecord,
+  type ScoreComponents, type TopOneSuggestionState, type VampireTelemetry, type VenueFeedbackReport, type VenueLLMRerankResult, type VenueNoiseLevel, type VenuePriceTier, type VenueRecord,
   type VenueRejectionReason, type WorkIntroState, type WorldSnapshot,
 } from "@thenetwork/core";
 import {
-  attention, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans, seatFills,
-  type AskRecord, type EngineAsk, type EngineConfigInput, type EngineDeps, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
-  type AppPack, type PlansConfig, type PlansConfigInput, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
+  attention, classifyEmptyStateRemedy, CONTRIBUTOR_ROLES, DEFAULT_ATTENTION, existingFriendPlanPairValues, friendsKit, JudgeCache, localEmbed, networkPack, plans, resolveConfig, resolvePlans, seatFills, spendTierRank,
+  type AskRecord, type EmptyStateRemedy, type EmptyStateRemedyOptions, type EngineAsk, type EngineConfigInput, type EngineDeps, type EngineInput, type EngineProposal, type FeedbackRecord, type InteractionRecord, type MatchingRunLog,
+  type AppPack, type PlansConfig, type PlansConfigInput, type SpendComfortTier, World as EngineWorld, DEFAULT_FRIENDS_POLICY, planFriendsWeek,
 } from "@thenetwork/engine";
 import { appKeys, brandFor } from "../../core/src/generated/brandIdentity.ts";
 import { mayClearMaturedSignupMinor } from "../../core/src/generated/memberAge.ts";
@@ -80,7 +80,7 @@ import { gatheringRepeatMayAnswer, gatheringRepeatMayBook, gatheringRepeatMaySta
 import { gatheringPriorityIsolated, gatheringPriorityNewcomer } from "../../core/src/generated/monthlyGatheringRsvp.ts";
 import type { GatheringNoticeKind } from "../../core/src/generated/monthlyGatheringNotices.ts";
 import { boundedHelpRoute, openHomeHelpCase } from "../../core/src/generated/boundedHelp.ts";
-import { isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
+import { asksChildCare, isHomeEntry, riskTerms } from "../../engine/src/filters.ts";
 import { bookedNeedsSyntheticAcceptance, bookedOccupies, bookedRecordOccupies, closeUnbookedItems, peonAcceptedHistoryAt, peonFeedbackRetainsAcceptance } from "../../core/src/generated/peonCapacity.ts";
 import { hireAnswerAllowed, hireClosedProbeReply, hireContactAllowed, hireProbeWasDeclined, managerQuestionDeadline, managerQuestionMayOpen } from "../../core/src/generated/peonHireDispatch.ts";
 import { initial as initialPlanDispatch, pendingPlanInviteDecision, planInvitationOpen, planProbeReplyCurrent, planTurnDue, step as stepPlanDispatch } from "../../core/src/generated/planDispatch.ts";
@@ -162,7 +162,7 @@ import { bookingWithdrawalAcknowledgmentAllowed } from "../../core/src/generated
 import { recommendationLocation } from "../../core/src/generated/plansLocation.ts";
 import { currentPairAllowed } from "../../core/src/generated/currentPairRestrictions.ts";
 import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAllowed, replacementCanTakeRole, reviewDraftWasUnsent } from "../../core/src/generated/newMatchParticipation.ts";
-import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
+import { allDesireById, DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { birthdayRecorded, minorNoticeFor, minorScopeNoticeDue, scopeNoticeTurnOpens, soloTeenApp, statedAgeNow, teenBirthDateContradicted, type MinorNotice } from "../../core/src/generated/textEnrollment.ts";
 import { ageAnswer, agesStated, availabilityTags, birthDateAnswer, birthDateStated, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, extractRedLineTags, feedbackOf, isCompleteParticipationRefusal, isNamedProbeTime, isProbeCounterTime, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestionFor, plansPlaceQuestionForCity, publicPlanLocation, sentencesOf, statedAge, unclearBirthDateAnswer, type Classified, type TimeOption } from "./classify.ts";
@@ -186,7 +186,7 @@ import type { RelayRecord } from "../../engine/src/relay.ts";
 import { APPEARANCE_PREFIX, appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { datingFactsOf, datingStatementOf, type DatingFacts } from "../../engine/src/packs/slop/profile.ts";
 import { mutuallyOpen } from "../../core/src/generated/mutualOpenness.ts";
-import { ASK_KINDS, LANE_BUDGETS, localDateParts, NEVER_REPLY, nextAt, NY, nyParts, OUTREACH, PRD_BUDGETS, SLOT_KINDS, tzForCity, type SendKind } from "./outreach.ts";
+import { ASK_KINDS, LANE_BUDGETS, localDateParts, NEVER_REPLY, nextAt, NY, OUTREACH, PRD_BUDGETS, SLOT_KINDS, tzForCity, type SendKind } from "./outreach.ts";
 import { BASE_REACH, FLOOR_EFFORT, type CapitalEvent, type CapitalEventInput, type CapitalReader, type GamingFlag, type NetworkEffort } from "./capital.ts";
 import { activityHints, BOOKING_GAP, PLAN_VENUE_AGES, PLAN_VENUES, planLedger, planVenueAgesForCity, planVenuesForCity, statedWindows } from "./plans.ts";
 import {
@@ -817,20 +817,42 @@ const MEMBER_ASK = /\?|\b(looking for|i'?d (really )?(like|love)|i want|i need|c
 /** A later check-in report is about someone: a pronoun or the date (lateCheckInReport). "My boss was rude" is not. */
 const ABOUT_SOMEONE = /\b(he|she|they|him|her|them|his|hers|their|my date|the date|our date)\b/i;
 /** A bare acknowledgement ("thx", "ok") answers logistics, not an earlier unsolicited message. */
-const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you(?: then| there)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
+const ACK_ONLY = /^(?:ok(?:ay)?|(?=(k+))\1|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you(?: then| there)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
 
 const BOOKING_CANCEL = /^(?:please )?(?:cancel|call off) (?:my|the|this|our) (?:meeting|date|plan|booking)(?: on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d))?(?: please)?[.!]?$/i;
 const EXACT_ATTENDANCE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t be able to) (?:make it to|attend) (?:my|the|this|our) (?:meeting|date|plan|booking) on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d)(?: anymore)?(?:, sorry)?[.!]?$/i;
 const STANDALONE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:(?:need|have) to (?:cancel|call it off)|(?:can'?t|cannot|won'?t be able to) (?:make it|come)(?: anymore)?|have to bail)(?:, sorry)?[.!]?$/i;
-const ATTENDANCE_DAY_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:cancel|(?:can'?t|cannot|won'?t be able to) (?:make it|make|come|attend)(?: to [^.?!;,]{1,80} on)?)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: anymore)?(?:, sorry)?[.!]?$/i;
+const ATTENDANCE_DAY_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:cancel|(?:need|have) to (?:cancel|call it off)|have to bail|(?:can'?t|cannot|won'?t be able to) (?:make it|make|come|attend)(?: to [^.?!;,]{1,80} on)?)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: anymore)?(?:, sorry)?[.!]?$/i;
+const DAY_TIME_CANCEL = /^(?:please )?(?:sorry[, ]+)?(?:i )?(?:cancel|call off)(?: (?:my|the|this|our))?(?: (?:meeting|date|plan|booking))?(?: on)?\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: (?:meeting|date|plan|booking))?(?: at)?(?: (\d{1,2})(?::(\d{2}))?\s*(am|pm)| (\d{1,2}):(\d{2}))?(?: please)?[.!]?$/i;
+const ATTENDANCE_DAY_TIME_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t be able to) (?:make it|make|come|attend)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: at)?(?: (\d{1,2})(?::(\d{2}))?\s*(am|pm)| (\d{1,2}):(\d{2}))(?: anymore)?(?:, sorry)?[.!]?$/i;
 const QUALIFIED_ATTENDANCE = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t|will not)\b[^.;!?]*\b(?:if|unless|assuming|in case)\b/i;
 const KEEP_BOOKING = /^(?:please )?(?:(?:i|we) (?:don'?t|do not) need to|(?:there(?: is|'s) )?no need to|(?:don'?t|do not)) (?:cancel|call off|call it off)\b[^.;!?]*(?:[.!]*)$/i;
-type BookingCancellation = { localStart?: string; day?: string; needsExactStart?: boolean };
+type BookingCancellation = { localStart?: string; altLocalStart?: string; day?: string; time?: string; altTime?: string; needsExactStart?: boolean };
+
+function parseCancelClock(match: RegExpExecArray): BookingCancellation {
+  const day = match[1]!.toLowerCase();
+  if (!match[2] && !match[5]) return { day };
+  const two = (n: number) => String(n).padStart(2, "0");
+  if (match[4] && Number(match[2]) >= 1 && Number(match[2]) <= 12 && Number(match[3] ?? "00") <= 59) {
+    const hour = Number(match[2]) % 12 + (match[4].toLowerCase() === "pm" ? 12 : 0);
+    return { day, time: `${two(hour)}:${match[3] ?? "00"}` };
+  }
+  if (match[5] && Number(match[5]) <= 23 && Number(match[6]) <= 59) {
+    const bareHour = Number(match[5]);
+    if (bareHour >= 1 && bareHour <= 12) {
+      return { day, time: `${two(bareHour % 12)}:${match[6]}`, altTime: `${two(bareHour % 12 + 12)}:${match[6]}` };
+    }
+    return { day, time: `${two(bareHour)}:${match[6]}` };
+  }
+  return { needsExactStart: true };
+}
 
 export function explicitBookingCancellation(text: string): BookingCancellation | undefined {
   const command = text.trim().replace(/[‘’ʼ`´]/g, "'").replace(/\s+/g, " ");
   const booking = BOOKING_CANCEL.exec(command) ?? EXACT_ATTENDANCE_CANCEL.exec(command);
   if (booking) return booking[1] ? { localStart: `${booking[1]} ${booking[2]}` } : {};
+  const dayTime = DAY_TIME_CANCEL.exec(command) ?? ATTENDANCE_DAY_TIME_CANCEL.exec(command);
+  if (dayTime) return parseCancelClock(dayTime);
   const namedDay = ATTENDANCE_DAY_CANCEL.exec(command);
   if (namedDay) return /\bto .+ on\s+/i.test(command) ? { needsExactStart: true } : { day: namedDay[1]!.toLowerCase() };
   return STANDALONE_CANCEL.test(command) ? {} : undefined;
@@ -847,7 +869,7 @@ function bookingCancellationDay(timeWord: string, receivedAt: number, tz = NY): 
 }
 
 const ATTENDANCE_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i\s+)?(?:can'?t|cannot|won'?t|will not)\s+(?:make it|come|attend)|(?:i'?m\s+|i am\s+)?not\s+(?:coming|attending|comfortable meeting)|i\s+(?:need|have)\s+to\s+(?:cancel|call it off))(?:\s+anymore)?[.,!]*$/i;
-const ATTENDANCE_JOIN = /[.!;]+|[,—–]|\s+-\s+|\b(?:but|and)\b/gi;
+const ATTENDANCE_JOIN = /[.!?;]+|[,—–]|\s+-\s+|\b(?:but|and)\b/gi;
 const NO_SWAP_OR_MEETING = /^(?:please[,]?\s+)?(?:i\s+(?:do not|don'?t)\s+want to|i'?m\s+not)\b[^.!?;]+\b(?:or|nor)\s+meet(?:ing)?\s+(?:you|them)\b[.!]*$/i;
 
 function declinesAttendanceAlongsideSwap(body: string): boolean {
@@ -860,6 +882,33 @@ function declinesAttendanceAlongsideSwap(body: string): boolean {
     start = end.index + end[0].length;
   }
   return !quoteStillOpen(text.slice(0, start)) && ATTENDANCE_CLAUSE.test(text.slice(start).trim());
+}
+
+const PROBE_PLAN_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i'?m\s+|i am\s+)?(?:withdrawing|withdraw|withdrew|withdrawn)\s+from\s+(?:this|that|it|the\s+(?:plan|meeting|proposal))|not\s+anymore|not\s+any\s+more|no\s+longer|(?:i'?m|i\s+am)\s+(?:out|done|leaving|not\s+in)|count\s+me\s+out|leave\s+me\s+out|(?:drop|remove|take)\s+me\s+(?:out|off)(?:\s+(?:this|that|it|the\s+(?:plan|meeting|proposal|list)))?|forget\s+it|never\s+mind|i'?ll\s+pass)[.,!]*$/i;
+
+const BARE_REFUSAL_CLAUSE = /^(?:no+|nope|nah|sorry|thanks|thank you|please)[.,!]*$/i;
+
+function declinesProbeAlongsideSwap(body: string): boolean {
+  if (declinesAttendanceAlongsideSwap(body)) return true;
+  const text = body.toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, '"');
+  const boundaries = [...text.matchAll(ATTENDANCE_JOIN)];
+  const clauses: string[] = [];
+  let start = 0;
+  for (const end of boundaries) {
+    if (!quoteStillOpen(text.slice(0, start))) clauses.push(text.slice(start, end.index).trim());
+    start = end.index + end[0].length;
+  }
+  if (!quoteStillOpen(text.slice(0, start))) clauses.push(text.slice(start).trim());
+  if (clauses.some(clause => clause !== "" && !BARE_REFUSAL_CLAUSE.test(clause) && !withdrawsSwap(clause)
+    && (PROBE_PLAN_CLAUSE.test(clause) || consentOf(clause).answer === "no"))) return true;
+  for (let i = 0; i < clauses.length; i++) {
+    if (!/^(?:no+|nope|nah)[.,!]*$/.test(clauses[i]!)) continue;
+    const plan: string[] = [];
+    for (let j = i + 1; j < clauses.length && !withdrawsSwap(clauses[j]!); j++) plan.push(clauses[j]!);
+    if (plan.length > 0 && !plan.some(clause => /\b(?:still in|still coming|still come|still on|see you|count me in|i'?ll be there|i'?m in)\b/.test(clause))
+      && consentOf([clauses[i]!, ...plan].join(", ")).answer === "no") return true;
+  }
+  return false;
 }
 
 /** The source text for a booked reply, with independent transfer and attendance evidence. */
@@ -1335,6 +1384,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private replyTo?: MemberId;
   private memberReply = false;
   private turnSource: "thread" | "mcp" | undefined;
+  private turnSilentMcp = false;
   private turnCause: string | undefined;
   private lastTick = 0;
   private tickGap = HOUR;
@@ -1396,7 +1446,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       reviewSlaHours: opts.reviewSlaHours ?? 12, matchingEnabled: opts.matchingEnabled ?? true,
       engine: opts.engine, onEngineRun: opts.onEngineRun, store: opts.store, onLedger: opts.onLedger, capital: opts.capital, plans: opts.plans ?? true,
       understand: opts.understand, workIntroEmailOf: opts.workIntroEmailOf, venueProvider: opts.venueProvider,
-      arrivalBriefs: opts.arrivalBriefs ?? isCity(resolvedCity),
+      arrivalBriefs: opts.arrivalBriefs ?? false,
       onAgeStated: opts.onAgeStated, onMinorSignal: opts.onMinorSignal, onTeenBar: opts.onTeenBar, onTeenPairAvoid: opts.onTeenPairAvoid, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks, onPosting: opts.onPosting,
       issueMemberInvite: opts.issueMemberInvite,
       memberInviteTurnAllowed: opts.memberInviteTurnAllowed, onPrivateInviteTurn: opts.onPrivateInviteTurn,
@@ -1495,6 +1545,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.memberReply = fromThread && !msg.keyword;
     this.sentThisTurn = false;
     this.turnSource = msg.source ?? "thread";
+    this.turnSilentMcp = msg.source === "mcp" && !msg.allowOnboardingReply;
     this.turnCause = msg.id;
     this.understood = u;
     const toldBefore = m.minorScopeToldAt;
@@ -1502,7 +1553,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const turnOpen = this.handleInbound(m, msg, privateInviteTurn, replyOpen, currentDanger, priorInboundAt, queueCofounderIntent, reportChoice) === "open";
       return scopeNoticeTurnOpens(turnOpen, m.minorScopeToldAt !== toldBefore) ? "open" : "handled";
     }
-    finally { this.replyTo = undefined; this.memberReply = false; this.sentThisTurn = false; this.turnSource = undefined; this.turnCause = undefined; this.understood = undefined; this.invitesBeforeReply.clear(); }
+    finally { this.replyTo = undefined; this.memberReply = false; this.sentThisTurn = false; this.turnSource = undefined; this.turnSilentMcp = false; this.turnCause = undefined; this.understood = undefined; this.invitesBeforeReply.clear(); }
   }
 
   /** How many messages we had sent since the member's previous message, when this one came in. */
@@ -1564,7 +1615,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
 
   private captureSlopIntroductions(opportunities: Iterable<Opp>) {
-    if (this.app.id !== "slop" || !this.ctx) return;
+    if (!isDatingDomain(this.app.id) || !this.ctx) return;
     const now = this.now();
     for (const opp of pendingSlopIntroductions(opportunities, this.interactions)) {
       const [first, second] = opp.participants as [MemberId, MemberId];
@@ -1897,8 +1948,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now, !strictReschedule);
     const directBookingReply = this.memberReply && !msg.reaction;
     const bookingText = directBookingReply ? body : "";
-    const cancellation = explicitBookingCancellation(bookingText);
-    const cancelDay = cancellation?.day ? bookingCancellationDay(cancellation.day, msg.signedReceivedAt ?? msg.ts, tz) : undefined;
+    const namedCancellation = explicitBookingCancellation(bookingText);
+    const cancelDay = namedCancellation?.day ? bookingCancellationDay(namedCancellation.day, msg.signedReceivedAt ?? msg.ts, tz) : undefined;
+    const cancellation = namedCancellation?.time && cancelDay
+      ? { ...namedCancellation, localStart: `${cancelDay} ${namedCancellation.time}`, ...(namedCancellation.altTime ? { altLocalStart: `${cancelDay} ${namedCancellation.altTime}` } : {}) }
+      : namedCancellation;
     // spec/opportunityLifecycle.md, "An explicit cancellation selects the named upcoming meeting"
     if (cancellation?.needsExactStart) {
       if (upcomingBookings.length === 1 && aw?.kind !== "booked") {
@@ -1950,7 +2004,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (!hireAnswerAllowed(this.memberReply && !msg.reaction, acceptedAt !== undefined,
           msg.signedReceivedAt ?? msg.ts, acceptedAt ?? now, now, deadline)) return "open" as const;
       }
-      if (this.app.id === "slop" && o?.category === "romance") {
+      if (isDatingDomain(this.app.id) && o?.category === "romance") {
         const receipt = this.ctx.initialInviteReceipt?.(probeReplyReceiptKey(o.id, m.id, aw));
         const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
         // spec/probeDispatch.md, "A Slop answer follows acceptance of the exact question"
@@ -2045,46 +2099,21 @@ export class ConsentNetwork implements NetworkUnderTest {
             return;
           }
         }
-        if (!checkIn && directBookingReply && !o.plan && !o.workIntro && !o.publicEventRevision && o.meetingAt !== undefined && o.meetingAt > now
-          && !cancellation && !CANCEL_INTENT_OVERRIDE_RX.test(bookingText) && VENUE_SWAP_INTENT_RX.test(bookingText)) {
-          const initialState = this.proposeTopOneVenueFor(o.participants, o.meetingAt, {
-            city: this.networkCity(),
-            teenFriendAllowed: o.teenRuleAt !== undefined,
-          });
-          const pivoted = this.pivotVenueSuggestion(initialState, body);
-          const nextSpot = pivoted.state.current?.venue && pivoted.state.current.venue.id !== o.venueId
-            ? pivoted.state.current.venue
-            : pivoted.state.backup?.venue && pivoted.state.backup.venue.id !== o.venueId
-              ? pivoted.state.backup.venue
-              : undefined;
-          if (nextSpot) {
-            const oldVenueId = o.venueId;
-            o.venueId = nextSpot.id;
-            o.venue = nextSpot.name;
-            o.venueArea = nextSpot.neighborhood;
-            this.ctx.log("venue_swapped", { oppId: o.id, memberId: m.id, fromVenueId: oldVenueId ?? null, toVenueId: nextSpot.id, reason: pivoted.reason });
-            this.send(m, this.copy.venueSwapProposed(nextSpot.name, nextSpot.neighborhood), { type: "scheduling", proposalId: o.id }, "reply");
-            const whenStr = whenPhrase(o.meetingAt, o.meetingTimeZone ?? tz);
-            for (const otherId of o.participants) {
-              if (otherId === m.id || o.status.get(otherId) !== "yes" || !o.bookedTold?.includes(otherId)) continue;
-              this.send(this.member(otherId), this.copy.silentPartnerVenueSwap(whenStr, nextSpot.name, { area: nextSpot.neighborhood }),
-                { type: "scheduling", proposalId: o.id }, "scheduling", { about: o.participants });
-            }
-            return;
-          }
-        }
+        if (!checkIn && directBookingReply && !o.plan && !o.workIntro && !o.seat && !o.publicEventRevision && o.meetingAt !== undefined && o.meetingAt > now
+          && !cancellation && !CANCEL_INTENT_OVERRIDE_RX.test(bookingText) && VENUE_SWAP_INTENT_RX.test(bookingText)
+          && this.handleBookedVenueObjection(m, o, body, classifyVenueRejection(body), now)) return;
         if (declines) {
           return this.handleDrop(m, o, true, !msg.reaction && bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || consentOf(body).answer === "no"));
         }
         if (confirms) {
           m.awaiting = undefined;
           this.confirmPlan(o, m.id, true);
-          this.ack(m, copy.bookedThanks, { direct: !whoQuestion });
+          this.ack(m, copy.bookedThanks, { direct: !whoQuestion && !checkIn });
           return;
         }
       }
     }
-    if (!msg.reaction && !c.pastAbsence && !withdrawsSwap(body) && !bookedReplyKeepsMeeting(bookingText)
+    if (!msg.reaction && !c.pastAbsence && (!withdrawsSwap(body) || declinesProbeAlongsideSwap(body)) && !bookedReplyKeepsMeeting(bookingText)
       && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
     if (cancellation && this.handleExplicitCancellation(m, cancellation, now)) return;
     if (aw?.kind === "checkin") {
@@ -2101,7 +2130,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           m.hints = evidence === "RecordWindows" ? activityHints(extractProfile(body).interests) : [];
         }
         this.ctx.log("availability_stated", { memberId: m.id, tags, windows: stated?.windows.length ?? 0 });
-        if (c.kind !== "people_request" && c.kind !== "plans_request") { this.ack(m, "Got it, thanks.", { direct: true }); return; }
+        if (c.kind !== "people_request" && c.kind !== "plans_request") { this.ack(m, "Got it, thanks."); return; }
       }
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
@@ -2206,7 +2235,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const startAt = o.meetingAt;
       if (!upcomingCancellationEligible(opportunityLifecycle(o), o.participants.includes(m.id),
         o.status.get(m.id) === "yes", startAt !== undefined && Number.isFinite(startAt), startAt ?? 0, now)) continue;
-      if (request.localStart !== undefined && localBookingStart(startAt!, tz) !== request.localStart) continue;
+      if (request.localStart !== undefined && localBookingStart(startAt!, tz) !== request.localStart && localBookingStart(startAt!, tz) !== request.altLocalStart) continue;
       if (date !== undefined && localDateParts(startAt!, tz).day !== date) continue;
       matches.push(o);
       if (matches.length === 2) break;
@@ -2356,6 +2385,43 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.alternates = [];
     const city = this.networkCity(), tz = this.cityTz();
     o.followupAt = computeFollowupTimestamp(o.plan ? o.plan.window.end : draft.proposedAt + HOUR, tz).scheduledAt;
+    const existingMeetup = this.meetups.getMeetup(o.id);
+    if (existingMeetup || (!o.workIntro && !o.seat)) {
+      const primaryVenueId = o.plan?.venueId ?? o.venueId ?? existingMeetup?.activeVenueId ?? existingMeetup?.primaryVenueId ?? o.id;
+      const facetsByMember = this.snapshotRows().facets;
+      const backupPick = this.venues.pickForMatch({
+        city,
+        mode: draft.roster.length >= 3 ? "group" : "date",
+        startMs: draft.proposedAt,
+        memberAreas: draft.roster.map(id => this.member(id).area).filter((a): a is string => !!a),
+        members: draft.roster.map(id => this.memberVenuePrefsOf(id, facetsByMember, [primaryVenueId]).prefs),
+        teenFriendAllowed: o.teenRuleAt !== undefined,
+        targetHobbies: o.tags,
+      }, now);
+      const pickedBackup = backupPick.primary?.venue.id !== primaryVenueId ? backupPick.primary?.venue : backupPick.backup?.venue;
+      o.backupVenueId = pickedBackup && pickedBackup.id !== primaryVenueId ? pickedBackup.id : undefined;
+      const venueRec = this.venues.getVenue(primaryVenueId);
+      const sameVenue = existingMeetup !== undefined
+        && (existingMeetup.activeVenueId === primaryVenueId || existingMeetup.primaryVenueId === primaryVenueId)
+        && (!o.venue || existingMeetup.venueName === o.venue);
+      const venueName = o.plan?.place.name ?? o.venue ?? venueRec?.name ?? existingMeetup?.venueName;
+      const venueAddress = venueRec?.address ?? (sameVenue ? existingMeetup?.venueAddress : undefined);
+      const arrivalLandmark = venueRec?.arrivalLandmark ?? (sameVenue ? existingMeetup?.arrivalLandmark : undefined);
+      this.meetups.registerMeetup({
+        meetupId: o.id,
+        ...(existingMeetup?.oppId ? { oppId: existingMeetup.oppId } : {}),
+        app: this.app.id,
+        city,
+        startMs: draft.proposedAt,
+        participants: [...draft.roster],
+        confirmed: [...draft.roster],
+        primaryVenueId,
+        ...(o.backupVenueId ? { backupVenueId: o.backupVenueId } : {}),
+        ...(venueName ? { venueName } : {}),
+        ...(venueAddress ? { venueAddress } : {}),
+        ...(arrivalLandmark ? { arrivalLandmark } : {}),
+      });
+    }
     this.ctx.recordMeeting({ proposalId: o.id, participants: draft.roster, at: draft.proposedAt, previousAt: draft.originalAt, city, kind: o.kind });
     this.ctx.log("meeting_rescheduled", { oppId: o.id, revision: o.scheduleRevision, previousAt: draft.originalAt, at: draft.proposedAt, changedAt: now });
     const tzLabel = timezoneLabel(city);
@@ -2639,24 +2705,33 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (this.app.id !== "ntwrk" || !this.matchingEnabled() || this.declinedIds.has(id)) return;
     const member = this.members.get(id);
     const record = this.record(id);
-    if (member && record?.homeCity === "nyc" && canBeMatched(record.age) && gatheringEventPreference(record.prefs)
+    if (member && record?.homeCity === this.networkCity() && canBeMatched(record.age) && gatheringEventPreference(record.prefs)
       && gatheringMemberStateCurrent(member, !this.trust.ok(id) || this.reportHeld(id), earliestDayKeyOf(this.now()))) return member;
   }
 
   private queueInviteJoin(inv: MemberState, notice: InviteJoinNotice) {
-    if (this.inviteJoinCopy(inv, notice) === undefined) return;
+    if (this.inviteJoinReceipt(inv, notice) === undefined) return;
     inv.pendingInviteJoins = [...(inv.pendingInviteJoins ?? []).filter(x => this.now() - x.at < inviteJoinNoticeLifetimeMs && x.inviteeId !== notice.inviteeId), notice];
     if (!inv.onlyWhenAsked) this.send(inv, "", { type: "info" }, "invite_notice", { about: [notice.inviteeId], hook: { t: "invite_notice", notice } });
   }
 
-  private inviteJoinCopy(inviter: MemberState, notice: InviteJoinNotice): { first: string; text: string } | undefined {
+  // spec/outreachPolicy.md, "An eligible join receipt can ride on a current reply": the receipt stays
+  // pending until it goes out or goes stale; consent and eligibility are checked when it goes out.
+  private inviteJoinReceipt(inviter: MemberState, notice: InviteJoinNotice): { first: string; inviteeConsents: boolean; ageMs: number } | undefined {
     const invitee = this.members.get(notice.inviteeId);
     const verifiedExternalName = !invitee ? this.ctx.verifiedJoinedInviteeName?.(inviter.id, notice.inviteeId) : undefined;
     const first = invitee?.first ?? verifiedExternalName;
     if (!first) return;
-    const eligible = this.checkRecipient(inviter.id, "invite_notice", { about: [notice.inviteeId], reply: false }).ok;
     const attributed = (invitee?.invitedBy === inviter.id || !!verifiedExternalName) && this.invitedIds.has(notice.inviteeId);
-    if (inviteJoinNoticeCurrent(attributed, !invitee?.optedOut, eligible, this.now() - notice.at)) return { first, text: copy.inviteeJoined(first) };
+    const ageMs = this.now() - notice.at;
+    if (inviteJoinNoticeCurrent(attributed, true, true, ageMs)) return { first, inviteeConsents: !invitee?.optedOut, ageMs };
+  }
+
+  private inviteJoinCopy(inviter: MemberState, notice: InviteJoinNotice, reply = false): { first: string; text: string } | undefined {
+    const receipt = this.inviteJoinReceipt(inviter, notice);
+    if (!receipt) return;
+    const eligible = this.checkRecipient(inviter.id, "invite_notice", { about: [notice.inviteeId], reply }).ok;
+    if (inviteJoinNoticeCurrent(true, receipt.inviteeConsents, eligible, receipt.ageMs)) return { first: receipt.first, text: copy.inviteeJoined(receipt.first) };
   }
 
   /**
@@ -2787,7 +2862,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * `skip`: the questions the member just answered, never repeated right away. False when nothing is left.
    */
   private onboardNext(m: MemberState, skip: readonly string[]): boolean {
-    if (this.turnSource === "mcp") return false;
+    if (this.turnSilentMcp) return false;
     const ob = this.opts.hooks?.onboarding;
     if (!ob || m.minor) return false;
     const nx = ob.next(m.onboarding, { age: this.ageOf(m), skip });
@@ -2799,11 +2874,11 @@ export class ConsentNetwork implements NetworkUnderTest {
   private onInterviewAnswer(m: MemberState, body: string) {
     this.learnFrom(m, body);
     m.awaiting = undefined;
-    const silentMcp = this.turnSource === "mcp";
+    const silentMcp = this.turnSilentMcp;
     // An app with its own onboarding loop takes over after the first answer.
     if (m.stage === "q1" && this.opts.hooks?.onboarding && !m.minor) {
       this.activate(m);
-      if (!silentMcp && !this.onboardNext(m, [])) this.ack(m, copy.ackLearned, { direct: true });
+      if (!silentMcp && !this.onboardNext(m, [])) this.ack(m, copy.ackLearned);
       return;
     }
     const ask = (next: "q2" | "q3", text: string) => {
@@ -2816,17 +2891,17 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!hasQ2) return ask("q2", copy.interview.availability);
       if (!hasQ3) return ask("q3", copy.interview.format);
       this.activate(m);
-      if (!silentMcp) this.ack(m, copy.ackLearned, { direct: true });
+      if (!silentMcp) this.ack(m, copy.ackLearned);
       return;
     }
     if (m.stage === "q2") {
       if (!hasQ3) return ask("q3", copy.interview.format);
       this.activate(m);
-      if (!silentMcp) this.ack(m, copy.ackLearned, { direct: true });
+      if (!silentMcp) this.ack(m, copy.ackLearned);
       return;
     }
     if (m.stage === "q3") this.activate(m);
-    if (!silentMcp) this.ack(m, copy.ackLearned, { direct: true });
+    if (!silentMcp) this.ack(m, copy.ackLearned);
   }
 
   /**
@@ -2883,7 +2958,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("ask_answered", { memberId: m.id, reason: ask.reason });
     if (c.kind === "people_request" && (!m.minor || this.teenAdmitted(m.id))) return this.openRequest(m, c, {});
     if (c.kind === "plans_request") return this.onPlans(m, c);
-    if (this.turnSource === "mcp") return;
+    if (this.turnSilentMcp) return;
     // The onboarding loop goes on with its next question, else the usual acknowledgement.
     if (this.onboardNext(m, reasons)) return;
     this.ack(m, copy.ackLearned);
@@ -3350,7 +3425,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       }
     }
     const named = reply.acceptsName && matches.size === 1 ? matches.values().next().value : undefined;
-    const competing = Boolean(m.awaiting);
+    const pronounOnly = reply.names.some(name => SAFETY_PRONOUN_CONFIRMATION.test(name));
+    const competing = Boolean(m.awaiting && (m.awaiting.at >= p.at || ["probe", "booked", "crew", "checkin"].includes(m.awaiting.kind) || (m.awaiting.kind === "interview" && pronounOnly)));
     const sole = p.targets?.length === 1 ? this.members.get(p.targets[0]!) : undefined;
     const exactConfirmation = !reply.explicitlyNamed && !text.normalize("NFKC").includes("?") && reply.names.some(isSafetyConfirmation);
     const confirmed = safetyQuestionUsesSoleOffer(!!sole, competing, exactConfirmation, matches.size > 0) ? sole : undefined;
@@ -3541,7 +3617,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
         for (const e of matches) this.applyStandingKeep(m, e, causeId);
         const kept = this.standingEntries(m, now).find(e => e.key === selected.key);
-        return reply(kept && kept.endsAt !== null ? STANDING_COPY.kept(selected.summary, kept.endsAt) : STANDING_COPY.resumed(summaries));
+        return reply(kept && kept.endsAt !== null ? STANDING_COPY.kept(selected.summary, kept.endsAt, this.memberZone(m.id)) : STANDING_COPY.resumed(summaries));
       }
       default:
         return reply(STANDING_COPY.already(selected.summary, selected.phase === "IntentPaused" ? "paused" : "on"));
@@ -3643,8 +3719,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const r of this.requests) {
       if (r.memberId !== m.id || r.kind !== "people") continue;
       const key = `request:${r.id}`;
-      const open = !r.withdrawn && !r.closed && (r.outcome === undefined || r.outcome === "none" || r.outcome === "probing");
-      const paused = r.withdrawn === true && r.withdrawnBy === key && m.intentControls?.[key] === "PauseControl";
+      const control = m.intentControls?.[key];
+      if (control === "CloseControl") continue;
+      const booked = r.outcome === "booked" && r.oppId !== undefined && this.opps.get(r.oppId)?.stage === "scheduled";
+      const open = !r.withdrawn && !r.closed && (r.outcome === undefined || r.outcome === "none" || r.outcome === "probing" || booked);
+      const paused = control === "PauseControl" && ((r.withdrawn === true && r.withdrawnBy === key) || (booked && !r.withdrawn && !r.closed));
       const objective = this.requestObjective(r);
       if ((!open && !paused) || covered.has(objective)) continue;
       entries.push({
@@ -3691,7 +3770,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const asked = !!pending && pending.keys.includes(e.key) && (pending.kind === "CloseAsked" || pending.kind === "RenewalAsked")
       && standingReplyApplies(pending.kind, "KeepReply", now - pending.at);
     const status: StandingStatus = e.kind === "posting" ? "open" : asked ? "waiting_on_you" : e.phase === "IntentPaused" ? "paused" : "active";
-    return { ref: e.ref, number: index + 1, kind: e.kind, summary: e.summary, status, inProgress: this.standingInProgress(m, e), endsAt: e.endsAt };
+    const inProgress = this.standingInProgress(m, e) || this.standingLinkedOpps(m, e).some(o => o.stage === "scheduled");
+    return { ref: e.ref, number: index + 1, kind: e.kind, summary: e.summary, status, inProgress, endsAt: e.endsAt };
   }
 
   private standingListText(m: MemberState, page: number, now: number): string {
@@ -4035,10 +4115,10 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** Give a home-entry request to safety staff before it can become a contact. */
-  private routeBoundedHelp(m: MemberState, text: string, quiet: boolean): boolean {
+  private routeBoundedHelp(m: MemberState, text: string, quiet: boolean, help = true): boolean {
     const cfg = resolveConfig(this.effectiveEngineConfig());
-    const homeEntry = isHomeEntry(cfg, text);
-    const route = boundedHelpRoute(riskTerms(cfg, text).length > 0, homeEntry);
+    const homeEntry = help && isHomeEntry(cfg, text);
+    const route = boundedHelpRoute(help ? riskTerms(cfg, text).length > 0 : asksChildCare(text), homeEntry);
     if (route === "SearchPublicHelp") return false;
     const prompt = homeEntry && !quiet ? this.opts.homeHelpIntakePrompt?.(m.id) : undefined;
     if (route === "ReviewHomeEntryHelp" && canBeMatched(this.ageOf(m))) {
@@ -4084,7 +4164,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private openRequest(m: MemberState, c: Classified, o: { quiet?: boolean }) {
-    if (c.category === "help" && this.allowedCategories.has("help") && this.routeBoundedHelp(m, c.text ?? "", !!o.quiet)) return;
+    if (this.allowedCategories.has("help") && this.routeBoundedHelp(m, c.text ?? "", !!o.quiet, c.category === "help")) return;
     if (!this.standingAddGate(m, { desireId: c.desireId, category: c.category, tags: c.tags }, true, !!o.quiet)) return;
     const now = this.now();
     const canSearch = this.trust.ok(m.id) && !this.reportHeld(m.id);
@@ -4479,8 +4559,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       ref: refOf(p.memberId), text: p.text === null ? null : packetText(p.text), ...(p.fallback !== undefined ? { fallback: packetText(p.fallback) } : {}),
       reveal: { text: packetText(p.reveal.text), ...(p.reveal.fallback !== undefined ? { fallback: packetText(p.reveal.fallback) } : {}) },
     });
-    const preview = this.reviewProbePreview(o.id, revision, this.judgeRenderedAt(o));
-    const planPreview = this.reviewPlanPreview(o.id, revision);
+    const preview = this.withoutCalendar(() => this.reviewProbePreview(o.id, revision, this.judgeRenderedAt(o)));
+    const planPreview = this.withoutCalendar(() => this.reviewPlanPreview(o.id, revision));
     const rosterHasMinor = this.teenRoster(o);
     const ages = members.map(m => m.age).filter((a): a is number => a !== null);
     const codeChecks: CodeCheck[] = rosterHasMinor && this.teenItemOk(o)
@@ -4855,8 +4935,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** This app rates photos (slop): its outbound words are checked for the rating too (editBlock, the relay desk). */
-  private get ratesPhotos(): boolean { return this.app.id === "slop"; }
-  private probeWindow(timeQuestion: boolean): number { return probeResponseMs(this.app.id === "slop", timeQuestion); }
+  private get ratesPhotos(): boolean { return isDatingDomain(this.app.id); }
+  private probeWindow(timeQuestion: boolean): number { return probeResponseMs(isDatingDomain(this.app.id), timeQuestion); }
 
   private approvalCheck(o: Opp): string | undefined {
     if (this.holdHelpOpportunity(o)) return "bounded_help_requires_safety_review";
@@ -5175,7 +5255,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     return (
       !!o.seat ||
       o.lane === "Cofounder" ||
-      (this.app.id === "peon" && o.category === "professional") ||
+      (isBusinessDomain(this.app.id) && o.category === "professional") ||
       o.tags.some(t => ConsentNetwork.WORK_ONTOLOGY_TAGS.has(t))
     );
   }
@@ -5303,6 +5383,12 @@ export class ConsentNetwork implements NetworkUnderTest {
     return canBeMatched(view.age) && !view.optedOut && !view.held && m.state !== "paused";
   }
 
+  private withoutCalendar<T>(fn: () => T): T {
+    const authority = this.opts.calendarFreeBusy;
+    this.opts.calendarFreeBusy = undefined;
+    try { return fn(); } finally { this.opts.calendarFreeBusy = authority; }
+  }
+
   private calendarEvidence(m: MemberState, now: number) {
     if (!m.calendar || !this.opts.calendarFreeBusy) return;
     return readCalendarFreeBusy({ app: this.app.id, memberId: m.id, purpose: calendarSchedulingPurpose, now },
@@ -5427,7 +5513,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("counter_proposal_relayed", { oppId: o.id, from: m.id, to: partnerId, slots: slots.map(s => s.start) });
     this.send(partner, copy.timesRetry(attention.timeOptionsPhrase(counterOptions, tz)), {
       type: "scheduling", proactive: false, timeOptions: counterOptions,
-      ...(this.app.id === "friends" || (this.app.id === "slop" && o.category === "romance") ? { proposalId: o.id } : {}),
+      ...(isFriendshipDomain(this.app.id) || (isDatingDomain(this.app.id) && o.category === "romance") ? { proposalId: o.id } : {}),
     }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: partnerId } });
     return true;
   }
@@ -5471,7 +5557,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (o.participants.length === 2 && counterSource && this.tryRelayCounterProposal(m, o, counterSource, this.now())) {
           return;
         }
-        this.ack(m, "No problem.", { direct: true });
+        this.ack(m, "No problem.");
         if (o.participants.length <= 2) return this.closeNoCommonTime(o, m.id);
         // A group goes on without this member, as after a no (docs/network.md 4.1). The times only
         // they turned down are not held against the others.
@@ -5487,7 +5573,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         o.sentAt = { ...o.sentAt, [m.id]: this.now() };
         const gathering = isGatheringRepeat(o);
         this.send(m, copy.timesRetry(attention.timeOptionsPhrase(fresh, this.cityTz())), { type: "scheduling", proactive: false, timeOptions: fresh,
-          ...(gathering || this.app.id === "friends" || (this.app.id === "slop" && o.category === "romance") ? { proposalId: o.id } : {}) }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id },
+          ...(gathering || isFriendshipDomain(this.app.id) || (isDatingDomain(this.app.id) && o.category === "romance") ? { proposalId: o.id } : {}) }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id },
           ...(gathering ? { key: gatheringRepeatProbeKey(o.id, m.id, true), noDefer: true } : {}) });
         return;
       }
@@ -5502,7 +5588,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const r = this.requests.find(x => x.oppId === o.id && x.memberId === m.id);
         if (r) { r.noCount = (r.noCount ?? 0) + 1; if (r.noCount >= 2) r.closed = true; }
       }
-      o.status.set(m.id, "unavailable"); pendingAck = { text: "No problem.", direct: true }; this.replaceOrClose(o, m.id);
+      o.status.set(m.id, "unavailable"); pendingAck = { text: "No problem.", direct: false }; this.replaceOrClose(o, m.id);
     }
     this.advanceProbes(o);
     if (pendingAck && !this.sentThisTurn) this.ack(m, pendingAck.text, { direct: pendingAck.direct });
@@ -5528,7 +5614,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-availabilityHistoryLimit);
       }
     });
-    if (answeredPlan && !this.sentThisTurn) this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.", { direct: !yes });
+    if (answeredPlan && !this.sentThisTurn) this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.");
     // A yes that the deadline turned away, here or in an earlier tick, still hears how the plan ended.
     const closedPending = outcome === undefined && o.planRun?.stage === "closed" && o.planRun.answers[m.id] === "pending";
     if (yes && (outcome === "expired" || closedPending)) this.noteFor(m.id, copy.planNotTogether);
@@ -5719,7 +5805,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const memberPrefs = participantPrefs.map(p => p.prefs);
     const venuePool = this.venuePoolForCity(bookingCity);
     const modeForOpp: "date" | "group" | "solo" | "professional" =
-      this.app.id === "peon" ? "professional" : o.participants.length >= 3 ? "group" : "date";
+      isBusinessDomain(this.app.id) ? "professional" : o.participants.length >= 3 ? "group" : "date";
     const excludedIds = this.venues.excludedIdsFor(o.participants);
     const prefs = this.memberVenuePrefs(o.participants);
     const useVenuePrefs = city !== "nyc" || excludedIds.size > 0 || prefs.nonDrinker || prefs.maxBudgetTier !== undefined;
@@ -5732,13 +5818,13 @@ export class ConsentNetwork implements NetworkUnderTest {
       let validatedFixedVenue = fixedVenue;
       if (anyRedLines) {
         if (validatedPackVenue && !published?.listing) {
-          const rec = this.findVenueRecordInPool(validatedPackVenue, venuePool);
+          const rec = this.venues.getVenue(validatedPackVenue.id) ?? this.findVenueRecordInPool(validatedPackVenue, venuePool);
           if (!rec || !this.venueRecordPassesRedLines(rec, memberPrefs, at, bookingTz, teenFriendAllowed)) {
             validatedPackVenue = undefined;
           }
         }
         if (validatedFixedVenue) {
-          const rec = this.findVenueRecordInPool(validatedFixedVenue, venuePool);
+          const rec = this.venues.getVenue(validatedFixedVenue.id) ?? this.findVenueRecordInPool(validatedFixedVenue, venuePool);
           if (!rec || !this.venueRecordPassesRedLines(rec, memberPrefs, at, bookingTz, teenFriendAllowed)) {
             validatedFixedVenue = undefined;
           }
@@ -6129,12 +6215,22 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.closedFrom = o.stage;
     o.closedReason = reason;
     o.stage = STAGE_BY_PHASE[next.phase];
+    this.meetups.close(o.id);
     // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
     for (const id of o.participants) {
       const participant = this.members.get(id);
       if (participant?.awaiting?.oppId === o.id) participant.awaiting = undefined;
     }
     this.ctx.log("opportunity_closed", { proposalId: o.id, reason });
+    if (o.requester) {
+      const r = this.requests.find(x => x.oppId === o.id && x.memberId === o.requester);
+      if (r && r.outcome === "booked") {
+        r.outcome = "none";
+        r.oppId = undefined;
+        this.dirty = true;
+        this.ctx.log("request_result", { requestId: r.id, memberId: r.memberId, outcome: "waiting", reason });
+      }
+    }
     for (const id of still) {
       const member = this.members.get(id);
       if (!minorClose || o.bookedTold?.includes(id)) this.sendBookedCancellation(o, id, copy.dropNotice("", false), minorClose);
@@ -6169,6 +6265,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const wasProbing = o.stage === "probing" || wasReview;
     if (o.stage === "probing") this.counters.oppsNotAvailable++;
     o.stage = STAGE_BY_PHASE[next.phase];
+    this.meetups.close(o.id);
     const systemProposal = !o.requester && !o.plan && o.origin !== "request" && o.origin !== "plans";
     const minorSend = minorClose ? { minorClose: true as const } : {};
     const told = new Set<MemberId>();
@@ -6206,6 +6303,11 @@ export class ConsentNetwork implements NetworkUnderTest {
           r.outcome = "none";
           if (tell && !r.toldRetryNone && !told.has(req!.id)) { r.toldRetryNone = true; this.send(req!, copy.declinedQuiet, { type: "info" }, "info"); }
         }
+      } else if (r && r.outcome === "booked") {
+        r.outcome = "none";
+        r.oppId = undefined;
+        this.dirty = true;
+        this.ctx.log("request_result", { requestId: r.id, memberId: r.memberId, outcome: "waiting", reason });
       }
     }
     // A review rejection or expiry is not something the members did: no interaction record.
@@ -6358,7 +6460,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private restoreFeedbackInteraction(record: InteractionRecord): InteractionRecord {
-    const slop = this.app.id === "slop", group = record.kind === "group";
+    const slop = isDatingDomain(this.app.id), group = record.kind === "group";
     if ((!slop && !group) || (record.outcome !== "completed" && record.outcome !== "no_show")) return record;
     const marker = record.id.lastIndexOf(":fb:");
     if (marker < 0) return record;
@@ -6418,7 +6520,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (own?.came && !otherMissing) {
         if (f.sentiment === "positive" || own.again) own.worthwhile = true;
         if (this.explicitlyConfirmsAttendance(body, others.length === 1)) own.confirmedRoster = true;
-        if (this.app.id === "friends" && o.plan && own.again) own.repeatProof = { revision: o.scheduleRevision ?? 0 };
+        if (isFriendshipDomain(this.app.id) && o.plan && own.again) own.repeatProof = { revision: o.scheduleRevision ?? 0 };
       }
       if (!counterpartAbsence) this.helpFeedback(m, o, f);
       if (f.selfNoShow) {
@@ -6435,7 +6537,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.interactions.push({
         id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: going,
         at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [],
-        ...(this.app.id === "slop" ? {
+        ...(isDatingDomain(this.app.id) ? {
           opportunityId: o.id,
           ...(f.selfNoShow ? { noShowBy: [m.id] } : { bookedMeeting: this.bookedMeeting(o) }),
         } : {}),
@@ -6826,7 +6928,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.settledAttendance = Object.fromEntries(findings.map(({ p, finding }) => [p, finding.mark]));
     const present = findings.filter(({ finding }) => finding.mark === "Attended").map(({ p }) => p);
     const origin = this.originOf(o);
-    const friendsPlan = this.app.id === "friends" && !!o.plan;
+    const friendsPlan = isFriendshipDomain(this.app.id) && !!o.plan;
     for (const { p, vouchers, organizerVerified, finding } of findings) {
       const key = `${o.id}:${p}`;
       const confirmers = vouchers.filter(x => said(x)?.confirmedRoster);
@@ -6945,16 +7047,19 @@ export class ConsentNetwork implements NetworkUnderTest {
    * only), built at most once per New York day. An app's own pack gets its adult input and its own
    * lane vectors, so a friends crew is pair-gated on Friend profiles, not on The Network's.
    */
-  private planWorldCache?: { day: string; w: EngineWorld };
+  private planWorldCache?: { day: string; now: number; snap: WorldSnapshot; standing: readonly MemberStandingRow[]; w: EngineWorld };
   private planWorld(now: number, fresh = false, exceptPlans: readonly string[] = []): EngineWorld {
     const day = localDateParts(now, this.cityTz()).day;
-    if (!fresh && !exceptPlans.length && this.planWorldCache?.day === day) return this.planWorldCache.w;
+    const snap = this.snapshotCached();
+    if (!exceptPlans.length && this.planWorldCache) {
+      const sameTick = this.planWorldCache.now === now && this.planWorldCache.snap === snap && this.planWorldCache.standing === this.memberStanding && !this.dirty;
+      if (sameTick || (!fresh && this.planWorldCache.day === day)) return this.planWorldCache.w;
+    }
     const pack = this.appPack();
     const input = pack ? this.packInput(now) : this.engineInput(now);
-    // Recovery rechecks an existing reviewed group. Its original and replacement rows are not competing proposals.
     if (exceptPlans.length) input.recentProposals = input.recentProposals?.filter(p => !exceptPlans.includes(p.id));
     const w = new EngineWorld({ ...input, memberStanding: this.memberStanding }, resolveConfig({ ...this.opts.engine }), localEmbed, pack ?? networkPack);
-    if (!exceptPlans.length) this.planWorldCache = { day, w };
+    if (!exceptPlans.length) this.planWorldCache = { day, now, snap, standing: this.memberStanding, w };
     return w;
   }
 
@@ -7099,7 +7204,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private friendsRosterVerificationCurrent(roster: readonly MemberId[]): boolean {
-    if (this.app.id !== "friends") return true;
+    if (!isFriendshipDomain(this.app.id)) return true;
     const seats = roster.map(id => ({ id, side: this.rosterSideOf(id) }));
     const withMinor = this.teenIntrosEnabled() && rosterHasMinor(seats.map(seat => seat.side));
     const now = this.now();
@@ -7366,7 +7471,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const pack = this.appPack();
     const cityPlanVenues = planVenuesForCity(city);
     const cityGeoVenues = venuesForCity(city);
-    const made: plans.Plan[] = pack?.id === "friends" ? this.friendsWeekPlans(now, evidence) : plans.planProposals(this.planWorld(now, true), {
+    const made: plans.Plan[] = pack && isFriendshipDomain(pack.id) ? this.friendsWeekPlans(now, evidence) : plans.planProposals(this.planWorld(now, true), {
       now, city, tz, evidence, venues: cityPlanVenues, exclude, carry: this.planCarry, lastPlannedAt: this.lastPlannedAt,
       hints: new Map([...this.members.values()].filter(m => m.hints?.length && m.stated && m.stated.until > now).map(m => [m.id, m.hints!] as [MemberId, string[]])),
       busyAt: (id, slot) => this.bookedNear(id, slot.start),
@@ -7378,7 +7483,8 @@ export class ConsentNetwork implements NetworkUnderTest {
         const venue = "activities" in destination ? cityGeoVenues.find(candidate => candidate.id === destination.id)
           : area && destination.listing ? { ...area, lat: destination.listing.lat, lng: destination.listing.lng } : undefined;
         const location = venue ?? area;
-        return location ? travelMinutes(home, location) : undefined;
+        if (!location) return undefined;
+        return city === "nyc" ? travelMinutes(home, location) : travelMinutesInCity(city, home.name, area?.name ?? home.name);
       },
     }, this.pcfg);
     this.ctx.log("planner_run", { plans: made.length, pool: evidence.size, city });
@@ -7685,7 +7791,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       || !planTurnDue(o.planRun.answers[id] === "pending", participantProbe(o, id).told)) return;
     const about = o.participants.filter(peer => peer === id || (o.stage === "scheduled"
       ? o.status.get(peer) === "yes" : activeOpportunityParticipant(o, peer)));
-    const friends = this.appPack()?.id === "friends";
+    const friends = !!this.appPack() && isFriendshipDomain(this.appPack()!.id);
     const friendPartner = friends && o.plan.partner;
     const friendReplacement = friends && !o.plan.invited.includes(id);
     // spec/planDispatch.md, "A missing seat or an absence rules out the invitation"
@@ -7780,7 +7886,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // spec/planFormation.md, "Alternates must fit the entire offered group"
     // spec/planDecision.md, "A Friends replacement needs a current pair value with every remaining member"
     let world: EngineWorld | undefined;
-    const friends = this.appPack()?.id === "friends";
+    const friends = !!this.appPack() && isFriendshipDomain(this.appPack()!.id);
     let probeWorld: EngineWorld | undefined;
     const keepsWords = (alternate: MemberId): boolean => {
       const plan = o.plan;
@@ -7893,7 +7999,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const a = plans.activityById.get(plan.activityId)!;
     if (o.replacementFor && !this.replacementPlanCurrent(o, now)) return this.planFallback(o);
-    const friendWorld = this.appPack()?.id === "friends" ? this.planWorld(now, true) : undefined;
+    const friendWorld = this.appPack() && isFriendshipDomain(this.appPack()!.id) ? this.planWorld(now, true) : undefined;
     const friendPartnerEligible = !friendWorld || !plan.partner || this.planFriendPartnerFits(friendWorld, going, plan.category);
     // Yes-sayers left out here were told "I'll tell you once enough people are in": they hear that it did not come together (never why).
     const left: MemberId[] = [];
@@ -8017,7 +8123,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     if (this.bookedNear(id, plan.window.start, o.id) || !this.calendarAllows([id], plan.window, now)
       || !this.checkRecipient(id, "reveal", { about: [...going, id], reply: false, opp: o }).ok
-      || (this.appPack()?.id === "friends" && !this.planFriendSeatFits(this.planWorld(now, true), id, going, "existingPlan"))) {
+      || (!!this.appPack() && isFriendshipDomain(this.appPack()!.id) && !this.planFriendSeatFits(this.planWorld(now, true), id, going, "existingPlan"))) {
       o.status.set(id, "unavailable");
       return;
     }
@@ -8050,7 +8156,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const candidates = eligible ? { ...run, answers: Object.fromEntries(eligible.map(id => [id, run.answers[id]!])) } : run;
     const chosen = plans.planFallback(candidates, now, w.events, this.pcfg);
     const partner = chosen.fallback.kind === "smaller" ? chosen.fallback.partnerPlan : undefined;
-    const friends = this.appPack()?.id === "friends";
+    const friends = !!this.appPack() && isFriendshipDomain(this.appPack()!.id);
     const { fallback, carry } = friends && partner && !this.planFriendPartnerFits(this.planWorld(now, true), partner.invited, partner.category)
       ? plans.planFallback(candidates, now, w.events, { ...this.pcfg, fallback: { ...this.pcfg.fallback, smaller: false } })
       : chosen;
@@ -8114,6 +8220,10 @@ export class ConsentNetwork implements NetworkUnderTest {
     return !!x && x.first.length >= 2 && t.includes(` ${x.first.toLowerCase()} `);
   }
 
+  private crewApart(ids: readonly MemberId[]): MemberId[] {
+    return ids.filter(id => ids.every(other => other === id || this.pairAllowed(id, other)));
+  }
+
   private crewCheck(m: MemberState, o: Opp, going: MemberId[]): string | undefined {
     if (!this.pcfg.crews.enabled || !o.plan || o.plan.crewId) return undefined;
     const post = o.post ?? {};
@@ -8122,6 +8232,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
     if (!this.recurrenceOk(o, [m.id])) return undefined;
     if (open) {
+      if (open.crew.members.some(id => !this.pairAllowed(m.id, id))) return undefined;
       const before = crewOfferState(open);
       const next = stepCrewOffer(before, { type: "extendOffer", memberId: m.id, enjoyedPlan: !!post[m.id]?.again });
       if (next === before) return undefined;
@@ -8131,7 +8242,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const w = this.planWorld(this.now());
     const attended = going.filter(id => post[id]?.came);
-    const positive = attended.filter(id => post[id]?.again);
+    const positive = this.crewApart(attended.filter(id => post[id]?.again));
     const rec: plans.PlanOutcomeRecord = {
       planId: o.id, activityId: o.plan.activityId, ...(o.plan.venueId ? { venueId: o.plan.venueId } : {}), city: o.plan.city, at: o.plan.window.start,
       attended, positive,
@@ -8176,12 +8287,13 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private resolveCrew(offer: CrewOffer) {
     offer.resolved = true;
+    const yes = this.crewApart(offer.yes.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m, undefined, { busyOk: true }); }));
     // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
-    const formed = this.recurrenceOk(this.opps.get(offer.planId), offer.crew.members) ? plans.crewOptIn(offer.crew, offer.yes, this.pcfg) : undefined;
+    const formed = this.recurrenceOk(this.opps.get(offer.planId), offer.crew.members) ? plans.crewOptIn(offer.crew, yes, this.pcfg) : undefined;
     const a = plans.activityById.get(offer.crew.activityId)!;
-    this.ctx.log(formed ? "crew_formed" : "crew_not_formed", { crewId: offer.crew.id, yes: offer.yes.length, offered: offer.offered.length });
+    this.ctx.log(formed ? "crew_formed" : "crew_not_formed", { crewId: offer.crew.id, yes: yes.length, offered: offer.offered.length });
     if (formed) { this.crews.push(formed); this.plansCounters.crewsFormed++; }
-    for (const id of offer.yes) {
+    for (const id of yes) {
       const m = this.members.get(id);
       if (m && !this.knownMinor(id)) this.send(m, formed ? copy.crewFormed(a.label) : copy.crewNotFormed, { type: "info" }, "info");
     }
@@ -8254,7 +8366,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const w = this.planWorld(now);
     const a = plans.activityById.get(plan.activityId)!;
     const last = this.lastParticipation(now);
-    const friends = w.pack.id === "friends";
+    const friends = isFriendshipDomain(w.pack.id);
     const ranked = [...this.members.values()]
       .filter(m => !invited.includes(m.id) && !plan.alternates.includes(m.id) && this.adultMember(m.id) && this.planSeatOk(m) && (m.age ?? this.statedToday(m) ?? 0) >= a.ageMin && this.crewWindowAvailable(m, plan.window, now)
         && (plans.activityFit(w, m.id, this.pcfg).get(plan.activityId) ?? 0) >= this.pcfg.minFit)
@@ -8910,14 +9022,14 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (!me) return 0;
     let best = 0;
     for (const [d, categories] of me.desires) {
-      const def = desireById.get(d);
+      const def = allDesireById.get(d);
       if (!def || !categories.has(category)) continue;
       for (const o of others) {
         const k = known.get(o);
         if (!k) continue;
-        if (def.category === "romance") continue; // the engine owns romance opt-in checks
+        if (def.category === "romance") continue;
         if (def.needsSkills.some(sk => k.strongSkills.has(sk))) best = Math.max(best, 1);
-        else if (def.pool && [...k.desires].some(([other, peerCategories]) => peerCategories.has(category) && desireById.get(other)?.pool === def.pool)) best = Math.max(best, 0.85);
+        else if (def.pool && [...k.desires].some(([other, peerCategories]) => peerCategories.has(category) && allDesireById.get(other)?.pool === def.pool)) best = Math.max(best, 0.85);
         else if (def.needsSkills.some(sk => k.skills.has(sk))) best = Math.max(best, 0.6);
         else if (def.needsInterests.some(t => k.interests.has(t))) best = Math.max(best, 0.45);
       }
@@ -9047,7 +9159,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Recheck this same reviewed pair without using its own pending proposal as a discovery exclusion. */
   private currentDatingPair(o: Pick<Opp, "category" | "participants">): boolean {
     const check = this.opts.hooks?.hardDatingPairCurrent;
-    if (!check || this.app.id !== "slop" || o.category !== "romance") return true;
+    if (!check || !isDatingDomain(this.app.id) || o.category !== "romance") return true;
     const [first, second] = o.participants;
     if (!first || !second || !this.pairAllowed(first, second)) return false;
     return o.participants.every(id => this.checkRecipient(id, "reveal", { about: o.participants, reply: false }).ok)
@@ -9490,7 +9602,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         ...input.edges.filter(e => bothAdmitted(e.from, e.to)),
         // Pairs the gate refuses (a "no", a review reject): slop's re-probe window is shorter than PAIR_HISTORY_DAYS,
         // and every pick the gate drops takes both members' slot of the run (SD-223).
-        ...(this.appPack()?.id === "slop" ? [...this.declined].filter(([k, at]) => at > now - PAIR_HISTORY_DAYS * DAY && both(...(k.split("|") as [MemberId, MemberId])))
+        ...(this.appPack() && isDatingDomain(this.appPack()!.id) ? [...this.declined].filter(([k, at]) => at > now - PAIR_HISTORY_DAYS * DAY && both(...(k.split("|") as [MemberId, MemberId])))
           .map(([k, at]) => { const [a, b] = k.split("|") as [MemberId, MemberId]; return { from: a, to: b, type: "avoid" as const, strength: 1, explicit: false, createdAt: at }; }) : []),
       ],
       recentProposals: (input.recentProposals ?? []).filter(p => p.participants.every(id => admitted.has(id))),
@@ -9617,7 +9729,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.repeatPreferencesAllow("social", pair) && pair.every(id => {
         if (this.declinedIds.has(id)) return false;
         const member = this.members.get(id), record = this.record(id);
-        return !!member && !!record && record.homeCity === "nyc" && canBeMatched(record.age) && record.state !== "paused" &&
+        return !!member && !!record && record.homeCity === this.networkCity() && canBeMatched(record.age) && record.state !== "paused" &&
           !record.prefs?.onlyWhenAsked && (record.accountStatus === undefined || record.accountStatus === "active") &&
           gatheringMemberStateCurrent(member, !this.trust.ok(id) || this.reportHeld(id), earliestDayKeyOf(this.now()));
       });
@@ -9661,7 +9773,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   gatheringPriorityEvidence(now: number) {
     if (this.app.id !== "ntwrk") return [];
     const records = new Map((this.ctx.snapshot().members as MemberRecord[])
-      .filter(record => record.homeCity === "nyc").map(record => [record.id, record]));
+      .filter(record => record.homeCity === this.networkCity()).map(record => [record.id, record]));
     const current = new Set<MemberId>();
     for (const [id, record] of records) {
       const member = this.members.get(id);
@@ -9706,7 +9818,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const members = [...new Set(ids)].filter(id => {
       const member = this.members.get(id);
       const record = records.get(id);
-      if (!member || member.stage !== "active" || record?.homeCity !== "nyc" || record.state === "paused"
+      if (!member || member.stage !== "active" || record?.homeCity !== this.networkCity() || record.state === "paused"
         || (record.accountStatus !== undefined && record.accountStatus !== "active") || !canBeMatched(record.age)) return false;
       const current = relayMemberOf(member, !this.trust.ok(id) || this.reportHeld(id), earliestDayKeyOf(this.now()));
       return !current.optedOut && !current.held && canBeMatched(current.age);
@@ -9792,12 +9904,12 @@ export class ConsentNetwork implements NetworkUnderTest {
   private send(m: MemberState, body: string, meta: SimMeta, kind: SendKind, o: SendOpts = {}): SendResult {
     const now = this.now();
     const opportunity = this.opps.get(meta.proposalId ?? meta.probe?.key ?? meta.plan?.planId ?? "");
-    if (opportunity && this.app.id === "friends" && meta.type && peerContactTypes.includes(meta.type)) {
+    if (opportunity && isFriendshipDomain(this.app.id) && meta.type && peerContactTypes.includes(meta.type)) {
       const peers = meta.booked && meta.participants?.length ? meta.participants : o.about ?? this.blockRoster(opportunity);
       const roster = [...new Set([m.id, ...peers])];
       if (!this.friendsRosterVerificationCurrent(roster)) return this.refuse(m.id, kind, "friends_verification_required", this.hookFns(m, o.hook));
     }
-    if (this.app.id === "slop" && opportunity?.category === "romance" && this.opts.hooks?.hardDatingPairCurrent
+    if (isDatingDomain(this.app.id) && opportunity?.category === "romance" && this.opts.hooks?.hardDatingPairCurrent
       && (o.hook?.t === "probe" || o.hook?.t === "times" || o.hook?.t === "reveal")) {
       const approved = reviewApproved(opportunity.review);
       const accepted = opportunity.participants.every(id => opportunity.status.get(id) === "yes");
@@ -9895,9 +10007,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       const roles = new Set([...(noticeOpportunity?.participants ?? []), ...(noticeOpportunity?.alternates ?? []), ...(noticeOpportunity?.contacted ?? [])]);
       const roleNames = new Set([...roles].map(id => this.members.get(id)?.first.toLowerCase()));
       for (const notice of m.pendingInviteJoins) {
-        const status = this.inviteJoinCopy(m, notice);
-        if (status === undefined) continue;
+        if (this.inviteJoinReceipt(m, notice) === undefined) continue;
         current.push(notice);
+        const status = this.inviteJoinCopy(m, notice, true);
+        if (status === undefined) continue;
         const conflicts = inviteJoinNoticeConflictsWithRole(roles.has(notice.inviteeId), roleNames.has(status.first.toLowerCase()));
         if (!inviteJoinNoticeMayRideReply(directMemberTurn, reply, carriesMemberText, conflicts)) continue;
         if (body.length + status.text.length + 1 <= INVITE_REPLY_MAX_CHARS && !this.guardCheck(status.text, m.id).length) {
@@ -10294,6 +10407,33 @@ export class ConsentNetwork implements NetworkUnderTest {
     return m.proactive.filter(t => localDateParts(t, tz).day === today).length;
   }
 
+  private budgetTierFromTags(tags: readonly string[]): VenuePriceTier | undefined {
+    const spendMap: Record<string, SpendComfortTier> = {
+      free: "free", freetier: "free",
+      low: "low", lowtier: "low",
+      moderate: "moderate", moderatetier: "moderate",
+      high: "high", hightier: "high",
+      unconstrained: "unconstrained", unconstrainedtier: "unconstrained",
+      luxury: "unconstrained",
+    };
+    let maxBudgetTier: VenuePriceTier | undefined;
+    for (const raw of tags) {
+      const t = raw.trim().toLowerCase();
+      const numMatch = /^(?:budget|price_tier|venue_budget|spend|hv:spend):([0-4])$/.exec(t);
+      if (numMatch) {
+        const tier = Number(numMatch[1]) as VenuePriceTier;
+        maxBudgetTier = maxBudgetTier === undefined ? tier : (Math.min(maxBudgetTier, tier) as VenuePriceTier);
+        continue;
+      }
+      const spendKey = t.startsWith("hv:spend:") ? t.slice(9) : t.startsWith("spend:") ? t.slice(6) : undefined;
+      if (spendKey && spendMap[spendKey]) {
+        const tier = spendTierRank(spendMap[spendKey]!) as VenuePriceTier;
+        maxBudgetTier = maxBudgetTier === undefined ? tier : (Math.min(maxBudgetTier, tier) as VenuePriceTier);
+      }
+    }
+    return maxBudgetTier;
+  }
+
   private venuePrefsOf(
     id: MemberId,
     extraVisited: readonly string[] = [],
@@ -10301,77 +10441,50 @@ export class ConsentNetwork implements NetworkUnderTest {
   ): { prefs: MemberVenuePrefs; hasRedLines: boolean; nonDrinker: boolean; explicitBudgetTier?: VenuePriceTier } {
     const m = this.members.get(id);
     const snapFacets = (facetsByMember ?? this.snapshotRows().facets).get(id) ?? [];
-    const allTags = new Set<string>();
-    for (const f of snapFacets) {
-      for (const t of f.tags) allTags.add(t.trim().toLowerCase());
-      const v = f.value.trim().toLowerCase();
-      if (v) allTags.add(v);
-    }
-    for (const t of m?.learned.redLines ?? []) allTags.add(t.trim().toLowerCase());
-    for (const t of m?.appTags ?? []) allTags.add(t.tag.trim().toLowerCase());
-    const hasTag = (needles: readonly string[]) => needles.some(n => {
-      if (allTags.has(n)) return true;
-      for (const t of allTags) if (t.endsWith(`:${n}`) || t === n) return true;
-      return false;
-    });
-    const strictSober = hasTag(["strict_sober", "sober", "no_alcohol", "alcohol_free", "alcohol_boundary"]);
-    const nonDrinker = strictSober || hasTag(["non_drinker", "nondrinker", "slop:drinking:never", "alcohol:none"]);
-    const vegetarian = hasTag(["vegetarian"]);
-    const vegan = hasTag(["vegan"]);
-    const halal = hasTag(["halal"]);
-    const kosher = hasTag(["kosher"]);
-    const glutenFree = hasTag(["gluten_free", "celiac"]);
-    const severeAllergen = hasTag(["severe_allergen", "nut_allergy", "peanut_allergy", "shellfish_allergy"]);
-    const wheelchairNeeded = hasTag(["wheelchair", "wheelchair_accessible"]);
-    const lowWalking = wheelchairNeeded || hasTag(["low_walking", "no_hiking"]);
-    const smokeFree = hasTag(["smoke_free", "non_smoker", "slop:dealbreaker:smoker"]);
-    const lowNoiseRequired = hasTag(["low_noise", "quiet_only", "hearing_accessible"]);
-    const daytimeOnly = hasTag(["daytime_only", "no_after_dark"]);
-    let explicitBudgetTier: VenuePriceTier | undefined;
-    const setBudget = (tier: VenuePriceTier) => {
-      explicitBudgetTier = explicitBudgetTier === undefined ? tier : (Math.min(explicitBudgetTier, tier) as VenuePriceTier);
-    };
-    for (const t of allTags) {
-      const numeric = /^(?:budget|price_tier|venue_budget|spend|hv:spend):([1-4])$/.exec(t);
-      if (numeric) {
-        setBudget(Number(numeric[1]) as VenuePriceTier);
-        continue;
-      }
-      const named = /^(?:hv:)?spend:(free|low|moderate|high|unconstrained)(?:tier)?$/.exec(t);
-      if (named) {
-        const level = named[1]!;
-        setBudget(level === "free" || level === "low" ? 1 : level === "moderate" ? 2 : level === "high" ? 3 : 4);
-      }
-    }
+    const extraTags = [
+      ...(m?.learned.redLines ?? []),
+      ...(m?.appTags ?? []).map(t => t.tag),
+    ];
+    const rl = extractMemberRedLines(snapFacets, extraTags);
+    const allTags = [
+      ...snapFacets.flatMap(f => [...f.tags, f.value]),
+      ...extraTags,
+    ];
+    const explicitBudgetTier = this.budgetTierFromTags(allTags);
     const hobbies = [...new Set([...snapFacets.filter(f => f.kind === "interest").flatMap(f => f.tags), ...(m?.learned.interests ?? [])])];
+    const snapAge = this.record(id)?.age;
     const age = m
-      ? (m.minor || m.minorSignal || m.minorReported ? 13 : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : (this.adultMember(id) ? 25 : 16))
-      : (this.adultMember(id) ? 25 : 16);
-    const hasRedLines = strictSober || nonDrinker || vegetarian || vegan || halal || kosher || glutenFree || severeAllergen || wheelchairNeeded || lowWalking || smokeFree || lowNoiseRequired || daytimeOnly;
+      ? (m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict
+        ? 0
+        : validAge(m.age) ? m.age
+        : !m.minor && validAge(m.statedAge) ? m.statedAge
+        : !m.minor && validAge(snapAge) ? snapAge
+        : 0)
+      : (validAge(snapAge) ? snapAge : 0);
     const visitedVenueIds = extraVisited.length
       ? [...new Set([...this.venues.visitedBy(id), ...extraVisited])]
       : this.venues.visitedBy(id);
     const rejectedVenueIds = this.venues.rejectedBy(id);
     return {
-      hasRedLines,
-      nonDrinker,
+      hasRedLines: rl.hasVenueRedLines,
+      nonDrinker: rl.nonDrinker,
       ...(explicitBudgetTier !== undefined ? { explicitBudgetTier } : {}),
       prefs: {
         memberId: id,
         age,
-        drinksAlcohol: !nonDrinker && canBeMatched(age),
-        strictSober,
-        vegetarian,
-        vegan,
-        halal,
-        kosher,
-        glutenFree,
-        severeAllergen,
-        wheelchairNeeded,
-        lowWalking,
-        smokeFree,
-        lowNoiseRequired,
-        daytimeOnly,
+        drinksAlcohol: !rl.nonDrinker && canBeMatched(age),
+        strictSober: rl.strictSober,
+        vegetarian: rl.vegetarian,
+        vegan: rl.vegan,
+        halal: rl.halal,
+        kosher: rl.kosher,
+        glutenFree: rl.glutenFree,
+        severeAllergen: rl.severeAllergen,
+        wheelchairNeeded: rl.wheelchairNeeded,
+        lowWalking: rl.lowWalking,
+        smokeFree: rl.smokeFree,
+        lowNoiseRequired: rl.lowNoiseRequired,
+        daytimeOnly: rl.daytimeOnly,
         maxBudgetTier: explicitBudgetTier ?? 4,
         visitedVenueIds,
         rejectedVenueIds,
@@ -10392,10 +10505,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     return { nonDrinker, ...(maxBudgetTier !== undefined ? { maxBudgetTier } : {}) };
   }
-
   private memberZone(id: MemberId): string {
     const home = this.record(id)?.homeCity;
-    if (isCity(home)) return CITY_TZ[home];
+    if (home) return timeZoneOf(home);
     return this.cityTz();
   }
 
@@ -11215,7 +11327,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.flagged = new Map((st.flagged ?? []).filter(([key, flag]) => typeof key === "string" && typeof flag?.at === "number" && typeof flag.reason === "string"));
     this.teenStop = parseTeenStop(st);
     this.planWorldCache = undefined;
-    this.replyTo = undefined; this.memberReply = false; this.turnSource = undefined; this.turnCause = undefined; this.currentRunId = undefined;
+    this.replyTo = undefined; this.memberReply = false; this.turnSource = undefined; this.turnSilentMcp = false; this.turnCause = undefined; this.currentRunId = undefined;
     this.snapCache = undefined; this.knownCache = undefined; this.dirty = true;
   }
 
@@ -11267,8 +11379,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       },
       send: (to, body, opts) => {
         const m = this.members.get(to);
-        if (!m) return;
         const opp = this.opps.get(opts.meetupId);
+        if (!m || opp?.stage === "closed") return;
         const about = opp?.participants.filter(p => p !== to) ?? [];
         const sendKind: SendKind = opts.kind === "arrival_relay" ? "relay"
           : opts.kind === "arrival_ack" ? "reply"
@@ -11564,7 +11676,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     teenFriendAllowed = false,
     opts: { hasReservation?: boolean; openEvent?: boolean; concurrentHeadcount?: number } = {}
   ): boolean {
-    if (teenFriendAllowed && venue.allAges !== true) return false;
+    if ((teenFriendAllowed || prefs.some(p => !canBeMatched(p.age))) && venue.allAges !== true) return false;
     const minParticipantAge = prefs.length ? Math.min(...prefs.map(p => p.age)) : 0;
     const groupSize = Math.max(1, prefs.length);
     const hasReservation = opts.hasReservation === true;
@@ -11644,8 +11756,17 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   venuePassesRedLines(venue: VenueRecord, participantIds: readonly MemberId[], startMs: number, tz?: string): boolean {
     const prefs = this.participantVenuePrefsOf(participantIds).map(p => p.prefs);
-    const resolvedTz = tz ?? cityTimezone(venue.city) ?? CITY_TZ.nyc;
+    const resolvedTz = tz ?? timeZoneOf(venue.city);
     return this.venueRecordPassesRedLines(venue, prefs, startMs, resolvedTz);
+  }
+
+  applyVenueFeedbackFor(
+    venueId: string,
+    memberId: MemberId,
+    report: Omit<VenueFeedbackReport, "venueId" | "memberId" | "at">,
+    now = this.now(),
+  ): VenueRecord | undefined {
+    return this.venues.recordFeedback(venueId, memberId, [], report, now);
   }
 
   private pickVenueWithRedLinesFromPrefs(
@@ -11664,14 +11785,14 @@ export class ConsentNetwork implements NetworkUnderTest {
       memberOverrides?: Partial<Record<MemberId, Partial<MemberVenuePrefs>>>;
     } = {}
   ): PrimaryBackupVenuePick {
-    const city: CityId = opts.city ?? (isLaunchCity(this.opts.city) ? this.opts.city : this.opts.city || "nyc");
+    const city: CityId = opts.city ?? (isLaunchCity(this.opts.city) ? this.opts.city : this.opts.city || this.networkCity());
     const areas = participantIds.map(id => this.member(id).area).filter((a): a is string => Boolean(a));
     const members = basePrefs.map(base => {
       const ov = opts.memberOverrides?.[base.memberId];
       return ov ? { ...base, ...ov } : base;
     });
-    const mode = opts.mode ?? (this.app.id === "peon" ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
-    const app = this.app.id === "friends" ? "friends" : this.app.id === "slop" ? "slop" : this.app.id === "peon" ? "peon" : "ntwrk";
+    const mode = opts.mode ?? (isBusinessDomain(this.app.id) ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
+    const app = isFriendshipDomain(this.app.id) ? "friends" : isDatingDomain(this.app.id) ? "slop" : isBusinessDomain(this.app.id) ? "peon" : "ntwrk";
     const pool = this.venuePoolForCity(city, opts.venues);
     const concurrentHeadcountByVenue = opts.concurrentHeadcountByVenue ?? this.venueRuntimeCtx.concurrentHeadcountByVenue;
     return pickPrimaryAndBackupVenue(
@@ -11734,8 +11855,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       const ov = opts.memberOverrides?.[p.prefs.memberId];
       return ov ? { ...p.prefs, ...ov } : p.prefs;
     });
-    const mode = opts.mode ?? (this.app.id === "peon" ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
-    const app = this.app.id === "friends" ? "friends" : this.app.id === "slop" ? "slop" : this.app.id === "peon" ? "peon" : "ntwrk";
+    const mode = opts.mode ?? (isBusinessDomain(this.app.id) ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
+    const app = isFriendshipDomain(this.app.id) ? "friends" : isDatingDomain(this.app.id) ? "slop" : isBusinessDomain(this.app.id) ? "peon" : "ntwrk";
     const pool = this.venuePoolForCity(city, opts.venues);
     const concurrentHeadcountByVenue = opts.concurrentHeadcountByVenue ?? this.venueRuntimeCtx.concurrentHeadcountByVenue;
     return proposeTopOne(
@@ -11780,7 +11901,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       llm: opts.llm ?? this.opts.engineLLM,
       candidates: state.candidates,
       shareableInterests: [...new Set(shareableInterests)],
-      mode: opts.mode ?? (this.app.id === "peon" ? "professional" : participantIds.length >= 3 ? "group" : "date"),
+      mode: opts.mode ?? (isBusinessDomain(this.app.id) ? "professional" : participantIds.length >= 3 ? "group" : "date"),
       forbiddenFacts: [...new Set(forbiddenFacts)],
       extraLeakCheck: text => (this.ratesPhotos && appearanceLeak(text) ? "appearance_leak" : null),
       deadlineMs: opts.deadlineMs ?? 8_000,
@@ -11860,7 +11981,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const city: CityId = this.opts.city ?? "nyc";
     const tz = o.meetingTimeZone ?? this.cityTz();
     const pool = this.venuePoolForCity(city);
-    const mode: "date" | "group" | "solo" | "professional" = this.app.id === "peon" ? "professional" : going.length >= 3 ? "group" : "date";
+    const mode: "date" | "group" | "solo" | "professional" = isBusinessDomain(this.app.id) ? "professional" : going.length >= 3 ? "group" : "date";
     const oldVenueId = o.venueId;
     let state = o.venueSuggestion;
     if (!state) {
@@ -11977,7 +12098,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   densityTierFor(qualifiedLocalCount: number): DensityTier {
-    const appKind = this.app.id === "slop" ? "slop" : this.app.id === "friends" ? "friends" : "ntwrk";
+    const appKind = isDatingDomain(this.app.id) ? "slop" : isFriendshipDomain(this.app.id) ? "friends" : "ntwrk";
     return evaluateDensityTier(appKind, qualifiedLocalCount);
   }
 
@@ -11993,8 +12114,12 @@ export class ConsentNetwork implements NetworkUnderTest {
   ): boolean {
     const m = this.members.get(memberId);
     if (!m || this.declinedIds.has(memberId)) return false;
+    if (this.reportHeld(memberId) || this.overBudget(m)) return false;
+    if (this.openOpps().some(o => activeOpportunityParticipant(o, memberId))) return false;
     const snap = this.record(memberId);
-    const age = m.minor || m.minorSignal || m.minorReported ? 13 : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : 0;
+    const age = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict
+      ? 0
+      : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : 0;
     return evaluateExternalSourcingTrigger({
       eligibleLocalPairs: opts.eligibleLocalPairs,
       topScoreScaled: opts.topScoreScaled,
@@ -12010,8 +12135,77 @@ export class ConsentNetwork implements NetworkUnderTest {
     });
   }
 
-  evaluateExternalEventPublish(draft: ExternalEventDraft): { allowed: boolean; approvedExternalCap: number; plannedTotal: number } {
-    return checkPublishExternalEvent(draft);
+  evaluateExternalOutreachBridge(
+    memberId: MemberId,
+    opts: Omit<ContactExternalProspectInput, "containsUrlOrBrandSpam" | "passedLeakAndClefGuard"> & {
+      draftText: string;
+      chargeExposure?: boolean;
+    },
+  ): { allowed: boolean; reasons: string[]; leaks: string[]; exposureDebt: number } {
+    const reasons: string[] = [];
+    const m = this.members.get(memberId);
+    if (!m || this.declinedIds.has(memberId)) {
+      return { allowed: false, reasons: ["unknown_or_declined_member"], leaks: [], exposureDebt: this.exposureDebt[memberId] ?? 0 };
+    }
+    const age = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict
+      ? 0
+      : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : 0;
+    if (!canBeMatched(age)) reasons.push("member_not_verified_adult");
+    if (m.optedOut || m.account) reasons.push("member_opted_out_or_restricted");
+    if (!this.trust.ok(memberId) || this.reportHeld(memberId)) reasons.push("member_trust_or_hold");
+    if (this.overBudget(m)) reasons.push("proactive_budget_reached");
+    if (this.openOpps().some(o => activeOpportunityParticipant(o, memberId))) reasons.push("active_open_opportunity");
+    const leaks = this.guardCheck(opts.draftText, memberId);
+    const hasAppearanceLeak = appearanceLeak(opts.draftText);
+    if (leaks.length > 0 || hasAppearanceLeak) reasons.push("leak_or_clef_guard_blocked");
+    const contactOk = evaluateContactExternalProspect({
+      ...opts,
+      passedLeakAndClefGuard: leaks.length === 0 && !hasAppearanceLeak,
+    });
+    if (!contactOk) reasons.push("external_contact_gate_rejected");
+    const allowed = reasons.length === 0;
+    if (allowed && opts.chargeExposure) {
+      this.exposureDebt[memberId] = (this.exposureDebt[memberId] ?? 0) + 1;
+    }
+    return { allowed, reasons, leaks, exposureDebt: this.exposureDebt[memberId] ?? 0 };
+  }
+
+  evaluateExternalEventPublish(
+    draft: ExternalEventDraft,
+    participantIds?: readonly MemberId[],
+  ): { allowed: boolean; approvedExternalCap: number; plannedTotal: number } {
+    const base = checkPublishExternalEvent(draft);
+    if (!base.allowed) return base;
+    const leaks = this.guardCheck(`${draft.title}\n${draft.description}`, "__external_event__");
+    if (leaks.length > 0 || appearanceLeak(`${draft.title}\n${draft.description}`)) {
+      return { ...base, allowed: false };
+    }
+    if (participantIds) {
+      for (const id of participantIds) {
+        const m = this.members.get(id);
+        if (!m || this.declinedIds.has(id) || m.optedOut || m.account) return { ...base, allowed: false };
+        const age = m.minor || m.minorSignal || m.minorReported || m.ageUnknown || m.ageConflict
+          ? 0
+          : validAge(m.age) ? m.age : validAge(m.statedAge) ? m.statedAge : 0;
+        if (!canBeMatched(age)) return { ...base, allowed: false };
+        if (!this.trust.ok(id) || this.reportHeld(id) || this.overBudget(m)) return { ...base, allowed: false };
+        if (this.openOpps().some(o => activeOpportunityParticipant(o, id))) return { ...base, allowed: false };
+      }
+    }
+    return base;
+  }
+
+  coldStartRemedyFor(
+    intentId: string,
+    memberId: MemberId,
+    reason: string,
+    opts?: EmptyStateRemedyOptions,
+  ): EmptyStateRemedy | null {
+    return classifyEmptyStateRemedy(
+      this.planWorld(this.now()),
+      { intentId, memberId, reason },
+      { city: this.networkCity(), appId: this.app.id, ...opts },
+    );
   }
 
   evaluateExternalEventQuorum(

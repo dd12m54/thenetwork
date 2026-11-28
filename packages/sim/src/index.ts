@@ -1,4 +1,9 @@
 export { clamp01, hash32, Rng } from "@thenetwork/core";
+export { median, medianOrNull, pairKey, safeDiv, sigmoid, topShare } from "./stats.ts";
+export {
+  extractiveGroupDrag, HUMOR_REGISTERS, SPEND_TIERS, spendTierIndex,
+  type DunbarOpenSlots, type HumorRegister, type SpendComfortTier,
+} from "./strata-shared.ts";
 export * from "./time.ts";
 export * from "./taxonomy.ts";
 export * from "./persona.ts";
@@ -23,3 +28,7 @@ export * from "./judge/metrics.ts";
 export * from "./judge/llmJudges.ts";
 export * from "./fiveCityHarness.ts";
 export * from "./fiveCitySuite.ts";
+export * from "./marketingTemplates.ts";
+export * from "./responseEngine.ts";
+export * from "./scenarios/unified.ts";
+export * from "./unifiedWorld.ts";

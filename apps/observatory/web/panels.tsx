@@ -6,13 +6,11 @@
 // spec/consoleMemberView.md, "The timeline shows recorded delivery and leak evidence for the exact message"
 import { CrossAppButton } from "./apps.tsx";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import type { ScoreComponents } from "@thenetwork/core";
 import {
-  Alert, AreaLink as AreaLinkView, Button, cn, Countdown as CountdownView, Disclosure as DisclosureView, FactLine, InspectorSection, Input, Kpi,
-  KpiGrid as KpiGridView, MemberLink as MemberLinkView, MeterBars, OpportunityLink, Popover, PopoverContent, PopoverTrigger, RevealControl, StatusMark, StatusRow,
+  Alert, Button, cn, Disclosure as DisclosureView, FactLine, InspectorSection, Input, Kpi,
+  KpiGrid as KpiGridView, Popover, PopoverContent, PopoverTrigger, RevealControl, StatusMark, StatusRow,
   type KpiTone, type StatusTone,
 } from "@thenetwork/ui";
-import { peonBrand, slopBrand } from "../../../packages/core/src/generated/brandIdentity.ts";
 import { canTogglePick, type Subject } from "../../../packages/core/src/generated/consoleNavigation.ts";
 import { initial as initialDetail, staffPhotoAllowed, staffPhotoReasonReady, staffPhotoView, step as stepDetail } from "../../../packages/core/src/generated/consoleMemberView.ts";
 import {
@@ -20,10 +18,11 @@ import {
   receiveViewer, revealOffered, sendWorldEvent, step as stepWorkspace, worldMenuShown, type Event as WorkspaceEvent, type PanelAnswer, type PanelView, type RevealForm, type WorkMode, type WorkPanel,
   type Workspace, type WorldEvent,
 } from "../../../packages/core/src/generated/consoleWorkspace.ts";
-import type { AppProfile360, BookedPlan, DeliveryReason, HealthAlert, MemberDetail, MemberPhoto, PeonProfile360, SlopProfile360, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
+import { teenFriendApp } from "../../../packages/core/src/generated/matchLane.ts";
+import type { AppProfile360, BookedPlan, BusinessProfile360, DatingProfile360, DeliveryReason, HealthAlert, MemberDetail, MemberPhoto, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
 import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf, workChannelLabel } from "./review.tsx";
 import { isMemberActive, INACTIVE_PARTICIPANT_STATUS, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Focus, type Opp } from "./store.ts";
-import { ago, COMPONENT_SIGN, consoleNav, dur, hasScoreParts, humanize, jumpTo, num, pct, pickMember, sentence, shortDate, stamp } from "./ui.tsx";
+import { ago, AreaLink, consoleNav, Countdown, dur, EventBadge, humanize, jumpTo, MemberLink, num, OppLink, pct, pickMember, ScoreParts, sentence, shortDate, stamp } from "./ui.tsx";
 
 const TONE: Record<string, StatusTone> = { bad: "destructive", warn: "warn", good: "ok", info: "primary", gold: "primary", neutral: "neutral" };
 const tone = (word: string | undefined): StatusTone => TONE[word ?? "neutral"] ?? "neutral";
@@ -82,28 +81,8 @@ function answerOf(r?: Fetched<unknown>): PanelAnswer {
 const DETAIL_PANEL: WorkPanel = "RequestsPanel";
 const detailView = (r?: Fetched<unknown>): PanelView => panelView(DETAIL_PANEL, answerOf(r), 1);
 
-/** A member name that moves the focus to the member. */
-function MemberLink({ id, first, children }: { id: string; first?: boolean; children?: ReactNode }) {
-  const m = store.members.get(id);
-  const name = m ? (first ? m.name.split(" ")[0] : m.name) : id;
-  return <MemberLinkView onOpen={() => store.focus({ kind: "member", id })}>{children ?? name}</MemberLinkView>;
-}
-/** An opportunity name ("Maya + Jon") that moves the focus to the opportunity. */
-function OppLink({ o, children }: { o: Opp; children?: ReactNode }) {
-  return <OpportunityLink onOpen={() => store.focus({ kind: "opportunity", id: o.id })}>{children ?? store.oppTitle(o)}</OpportunityLink>;
-}
-/** A neighborhood name that moves the focus to the neighborhood. */
-function AreaLink({ area }: { area?: string }) {
-  if (!area) return null;
-  return <AreaLinkView onOpen={() => store.focus({ kind: "neighborhood", id: area })}>{area}</AreaLinkView>;
-}
-/** The state of an opportunity as a colored shape. */
 function OppMark({ state }: { state: string }) {
   return <StatusMark tone={OPP_STATE_TONE[state] ?? (OPEN.has(state) ? "primary" : "neutral")} label={stateLabel(state)} />;
-}
-/** The time left to a deadline on the console clock. */
-function Countdown({ deadline, prefix, what }: { deadline: number; prefix?: string; what?: string }) {
-  return <CountdownView deadline={deadline} now={store.now()} prefix={prefix} what={what} deadlineLabel={stamp(deadline)} />;
 }
 /** A disclosure whose open state stays for this viewer (localStorage obs.disclosure.<name>). Its content renders only while it is open. */
 function Disclosure({ name, summary, children, defaultOpen = false }: { name: string; summary: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
@@ -185,7 +164,7 @@ function Overview() {
   const pending = s.reviewPending();
   const dueSoon = pending.filter(o => o.review && o.review.deadline - now < 3_600_000).length;
   const expired = [...s.opps.values()].filter(o => o.review?.decision === "expired" && s.inRange(o.review.decidedAt ?? o.updatedAt) && s.matchOpp(o, { range: true, stateGroup: true })).length;
-  const holds = [...s.members.values()].filter(m => m.trust === "hold" && s.inBorough(m)).length;
+  const holds = [...s.members.values()].filter(m => m.trust === "hold" && s.inBorough(m) && s.matchMemberDomain(m)).length;
   const prompt = s.game?.prompts[0];
   const toReview = (view: "pending" | "decided") => {
     if (jumpTo("review")) store.setUI({ reviewView: view });
@@ -247,12 +226,12 @@ function KpiGrid({ area }: { area?: string }) {
   const s = useStore();
   const now = s.now();
   const f = s.ui.filters;
-  const inScope = (m?: ObsMember) => !!m && (area ? m.area === area : s.inBorough(m));
+  const inScope = (m?: ObsMember) => !!m && (area ? m.area === area : s.inBorough(m)) && s.matchMemberDomain(m);
   const members = [...s.members.values()].filter(m => inScope(m));
   const originOk = (o: Opp) => f.origin === "all" || originOf(o) === f.origin;
-  const opps = [...s.opps.values()].filter(o => o.source !== "shadow" && o.participants.some(id => inScope(s.members.get(id))));
+  const opps = [...s.opps.values()].filter(o => o.source !== "shadow" && s.matchOppDomain(o) && o.participants.some(id => inScope(s.members.get(id))));
   const active = members.filter(isMemberActive).length;
-  const inReview = opps.filter(o => o.state === "IN_REVIEW" && originOk(o));
+  const inReview = opps.filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason && originOk(o));
   const dueSoon = inReview.some(o => o.review && o.review.deadline - now < 3_600_000);
   const reviewOff = s.network?.kind === "stub";
   const proposals = opps.filter(o => originOk(o) && s.inRange(o.createdAt)).length;
@@ -261,9 +240,12 @@ function KpiGrid({ area }: { area?: string }) {
   const yesRate = revealed.length ? allYes / revealed.length : undefined;
   const met = opps.filter(o => originOk(o) && MET.has(o.state) && o.meetingAt !== undefined && s.inRange(o.meetingAt)).length;
   const upcoming = opps.filter(o => o.state === "SCHEDULED").length;
-  const requests = s.network && !area && f.borough === "all"
-    ? s.network.requests.waiting + s.network.requests.probing
-    : opps.filter(o => OPEN.has(o.state) && originOf(o) === "request").length;
+  const network = !area && f.borough === "all" && s.allDomainsSelected() ? s.network : undefined;
+  const requests = network
+    ? network.requests.waiting + network.requests.probing
+    : s.requests.length
+      ? s.requests.filter(r => (r.outcome === "probing" || r.outcome === "none" || r.outcome === "open") && s.matchRequestDomain(r) && inScope(s.members.get(r.memberId))).length
+      : opps.filter(o => OPEN.has(o.state) && originOf(o) === "request").length;
   const holds = members.filter(m => m.trust === "hold").length;
   const range = s.rangeLabel();
   const go = (patch: Parameters<typeof store.setFilters>[0], drawer?: Parameters<typeof store.setUI>[0]["drawer"]) => {
@@ -278,7 +260,10 @@ function KpiGrid({ area }: { area?: string }) {
         : <Kpi label="In review" value={num(inReview.length)} tone={dueSoon ? KPI_TONE.warn : undefined} title="Waiting for a human reviewer before anyone is contacted (PRD 32.8). Amber: one is due in under 1 h." onSelect={() => (jumpTo("review") ? store.setUI({ reviewView: "pending" }) : jumpTo("pipeline"))} />}
       <Kpi label="Everyone-yes" value={yesRate === undefined ? "–" : pct(yesRate)} tone={yesRate !== undefined && yesRate >= 0.85 ? KPI_TONE.good : undefined} title={`Of ${revealed.length} opportunities revealed in the range, the share where every participant said yes. Target 85%.`} onSelect={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
       <Kpi label={`Meetings · ${range}`} value={num(met)} title={`Meetings held in the range. ${upcoming} scheduled.`} onSelect={() => go({ stateGroup: "met" }, "pipeline")} />
-      <Kpi label="Open requests" value={num(requests)} tone={requests ? KPI_TONE.warn : undefined} title="People requests still being worked on (probing or waiting)" onSelect={() => go({ origin: "request" }, "pipeline")} />
+      <Kpi label="Open requests" value={num(requests)} tone={requests ? KPI_TONE.warn : undefined} title="People requests still being worked on (probing or waiting)" onSelect={() => {
+        if (network && jumpTo("requests")) store.setUI({ requestSegment: initialWorkspace.requestSegment });
+        else go({ origin: "request" }, "pipeline");
+      }} />
       <Kpi label="Safety holds" value={num(holds)} tone={holds ? KPI_TONE.bad : undefined} title="Members on trust hold (never matched until cleared)" onSelect={() => go({ members: "hold" }, "safety")} />
     </KpiGridView>
   );
@@ -288,7 +273,7 @@ function KpiGrid({ area }: { area?: string }) {
 function NeedsAttention({ area }: { area?: string }) {
   const s = useStore();
   const now = s.now();
-  const scoped = (o: Opp) => (area ? o.participants.some(id => s.members.get(id)?.area === area) : s.matchOpp(o, { range: true, stateGroup: true }));
+  const scoped = (o: Opp) => (area ? o.participants.some(id => s.members.get(id)?.area === area) && s.matchOppDomain(o) : s.matchOpp(o, { range: true, stateGroup: true }));
   const rows: ReactNode[] = [];
   const seen = new Set<string>();
   for (const o of s.reviewPending().filter(scoped)) {
@@ -320,9 +305,9 @@ function TrustMark({ trust }: { trust?: string }) {
 /** One neighborhood: its numbers, what needs attention, its open opportunities and its members. */
 function NeighborhoodPanel({ area }: { area: string }) {
   const s = useStore();
-  const members = [...s.members.values()].filter(m => m.area === area);
+  const members = [...s.members.values()].filter(m => m.area === area && s.matchMemberDomain(m));
   const activity = (m: ObsMember) => m.counters.meetings * 2 + m.counters.accepted + m.counters.proposals * 0.2;
-  const opps = [...s.opps.values()].filter(o => OPEN.has(o.state) && o.source !== "shadow" && o.participants.some(id => s.members.get(id)?.area === area));
+  const opps = [...s.opps.values()].filter(o => OPEN.has(o.state) && o.source !== "shadow" && s.matchOppDomain(o) && o.participants.some(id => s.members.get(id)?.area === area));
   return (
     <>
       <div className={headClass}>
@@ -398,10 +383,13 @@ function MemberPanel({ id }: { id: string }) {
         ]} />
       </div>
       {game && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant={picked ? "primary" : "outline"} size="sm" disabled={!canTogglePick(consoleNav(), picked, !!m.minor)} title={m.minor ? "Members under 18 are never introduced" : "Pick for an intro (shift-click on the map)"} onClick={() => pickMember(id)}>{picked ? "Picked ✓" : "Pick for intro"}</Button>
-          <Button variant={controlled ? "primary" : "outline"} size="sm" onClick={() => store.control({ type: "takeover", memberId: id, on: !controlled })}>{controlled ? "Let go" : "Play as"}</Button>
-          <WorldMenu id={id} />
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant={picked ? "primary" : "outline"} size="sm" disabled={!canTogglePick(consoleNav(), picked, !!m.minor)} title={m.minor ? "Members under 18 cannot be manually picked" : "Pick for an intro (shift-click on the map)"} onClick={() => pickMember(id)}>{picked ? "Picked ✓" : "Pick for intro"}</Button>
+            <Button variant={controlled ? "primary" : "outline"} size="sm" onClick={() => store.control({ type: "takeover", memberId: id, on: !controlled })}>{controlled ? "Let go" : "Play as"}</Button>
+            <WorldMenu id={id} />
+          </div>
+          <MemberSayForm id={id} first={m.name.split(" ")[0] ?? id} />
         </div>
       )}
       {(request || activeIntents.length > 0 || pastIntents.length > 0) && (
@@ -444,6 +432,28 @@ function MemberPanel({ id }: { id: string }) {
         </>
       )}
     </>
+  );
+}
+
+function MemberSayForm({ id, first }: { id: string; first: string }) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const submit = async () => {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+    setSending(true);
+    const r = await store.control({ type: "say", memberId: id, text: trimmed });
+    setSending(false);
+    if (r.ok) {
+      setText("");
+      store.toast(`Sent as ${first}`, "good");
+    }
+  };
+  return (
+    <form className="flex items-center gap-2" onSubmit={e => { e.preventDefault(); void submit(); }}>
+      <Input className="min-w-0 flex-1" aria-label={`Send message as ${first}`} placeholder={`Message Network as ${first}…`} value={text} onChange={e => setText(e.target.value)} />
+      <Button variant="outline" size="sm" type="submit" disabled={!text.trim() || sending}>Say</Button>
+    </form>
   );
 }
 
@@ -617,28 +627,6 @@ export function OppList({ opps, me }: { opps: Opp[]; me?: string }) {
 
 type TimelineItem = { t: number; key: string; msg?: ObsMessage & { memberId?: string }; ev?: ObsFeedItem; sys?: SystemEvent };
 
-/** A compact mark per system event type (decisions, probes, refusals, safety, age). */
-function eventIcon(e: SystemEvent): string {
-  const t = e.type, d = e.detail ?? {};
-  if (t === "review_decision") return d.decision === "reject" ? "✕" : d.decision === "reroll" ? "↻" : "✓";
-  if (t === "review_expired") return "⧖";
-  if (t === "review_invalidated" || t === "review_refused" || t === "send_refused" || t === "send_skipped" || t === "proposal_skipped") return "⊘";
-  if (t.startsWith("review")) return "▣";
-  if (t.startsWith("probe") || t === "time_answer") return "◌";
-  if (t === "send_deferred") return "◷";
-  if (t === "gate_reason") return "⊘";
-  if (t === "booked_cancelled") return "✕";
-  if (t === "availability_offer" || t === "calendar_consent" || t === "weekly_checkin_consent" || t === "checkin_sent" || t === "availability_stated") return "▦";
-  if (t === "guard_blocked") return "◈";
-  if (t === "trust" || t === "abuse" || t === "safety_flag" || t === "safety_action" || t === "member_blocked") return "⚑";
-  if (t.startsWith("age") || t === "minor_signal" || t === "join_declined") return "△";
-  if (t.startsWith("request")) return "✦";
-  if (t === "meeting_scheduled" || t === "interaction_occurred" || t === "venue") return "◎";
-  if (t === "matching_switch" || t === "review_mode") return "≡";
-  if (t === "member_accepted") return "✓";
-  return "·";
-}
-/** The leak-check result on an outbound message. */
 function GuardMark({ g }: { g?: ObsMessage["guard"] }) {
   if (!g) return null;
   const mark = guardMarks[g];
@@ -687,8 +675,10 @@ function TimelineList({ items, who }: { items: TimelineItem[]; who: (m: ObsMessa
           {x.msg.booked && <div className="text-muted-foreground">Booked for {stamp(x.msg.booked.at)} · silence for {x.msg.booked.optOutHours} h counts as yes; &quot;can't&quot; cancels</div>}
         </div>
       ) : x.sys ? (
-        <div key={x.key} className={SEVERITY_TEXT[x.sys.severity ?? "info"] ?? "text-foreground"} title={x.sys.detail ? Object.entries(x.sys.detail).map(([k, v]) => `${k}: ${v}`).join(" · ") : x.sys.type}>
-          <span className="mr-1" aria-hidden>{eventIcon(x.sys)}</span><span className="text-muted-foreground">{stamp(x.sys.t)}</span> {x.sys.text}
+        <div key={x.key} className={cn("flex flex-wrap items-baseline gap-1.5", SEVERITY_TEXT[x.sys.severity ?? "info"] ?? "text-foreground")} title={x.sys.detail ? Object.entries(x.sys.detail).map(([k, v]) => `${k}: ${v}`).join(" · ") : x.sys.type}>
+          <EventBadge e={x.sys} />
+          <span className="text-muted-foreground tabular-nums">{stamp(x.sys.t)}</span>
+          <span>{x.sys.text}</span>
           {x.sys.opportunityId && store.opps.has(x.sys.opportunityId) && !(store.ui.focus?.kind === "opportunity" && store.ui.focus.id === x.sys.opportunityId) && <> <OppLink o={store.opps.get(x.sys.opportunityId)!}>→</OppLink></>}
         </div>
       ) : (
@@ -738,7 +728,7 @@ function BookedPlanView({ o, b }: { o: Opp; b: BookedPlan }) {
   const now = s.now();
   return (
     <>
-      <div className="text-sm">Booked for {stamp(b.at)}{o.venue ? <> at <VenueLink venue={o.venue} /></> : null}. Each member can say they can't within {b.optOutHours} h; silence is a yes.</div>
+      <div className="text-sm">Booked for {stamp(b.at, o.city)}{o.venue ? <> at <VenueLink venue={o.venue} /></> : null}. Each member can say they can't within {b.optOutHours} h; silence is a yes.</div>
       {o.participants.map(x => {
         const told = b.told[x], off = b.cancelled[x];
         const closes = told === undefined ? undefined : Math.min(told + b.optOutHours * 3_600_000, b.at);
@@ -756,38 +746,36 @@ function BookedPlanView({ o, b }: { o: Opp; b: BookedPlan }) {
   );
 }
 
-/** The member panel of one app: the summary line of its disclosure and its body. */
-interface AppSectionView { summary: (p: SlopProfile360 | PeonProfile360) => string; body: (id: string, p: SlopProfile360 | PeonProfile360) => ReactNode }
-
-/** The apps that have their own member panel, keyed by the app id of their brand record. An app without a row has no panel. */
-const APP_SECTIONS: Record<string, AppSectionView> = {
-  [slopBrand.keyword]: { summary: () => `Dating (${slopBrand.keyword})`, body: (id, p) => <SlopPanel id={id} p={p as SlopProfile360} /> },
-  [peonBrand.keyword]: {
-    summary: p => `Hiring (${peonBrand.keyword}) · ${(p as PeonProfile360).applications.length} introductions`,
-    body: (_id, p) => <PeonPanel p={p as PeonProfile360} />,
-  },
-};
-
-/** The app's own panel from `APP_SECTIONS`: slop (dating preferences behind a reveal, the photo rule) or peon (roles, applications). */
+/** Domain-specific Member 360 disclosures: Dating (preferences behind a reveal, photo gate) and Business (roles, introductions). */
 function AppSection({ id }: { id: string }) {
   const s = useStore();
-  const has = Object.hasOwn(APP_SECTIONS, s.app);
-  const r = useLive<AppProfile360>(() => (has ? store.memberApp(id) : Promise.resolve({ status: 200 as const, data: { app: s.app, none: true as const } })), memberKey(id), () => detailScope(id, store.revealFor(id)?.until));
+  const supportsDomains = s.app === "ntwrk" || s.app === "slop" || s.app === "peon";
+  const r = useLive<AppProfile360>(
+    () => (supportsDomains ? store.memberApp(id) : Promise.resolve({ status: 200 as const, data: { app: s.app, none: true as const } })),
+    memberKey(id),
+    () => detailScope(id, store.revealFor(id)?.until),
+  );
   const p = r?.data;
-  if (!has || !p || "none" in p) return null;
-  const section = Object.hasOwn(APP_SECTIONS, p.app) ? APP_SECTIONS[p.app] : undefined;
-  if (!section) return null;
-  return <Disclosure name={`app-${p.app}`} summary={section.summary(p)}>{section.body(id, p)}</Disclosure>;
+  if (!supportsDomains || !p || "none" in p) return null;
+  const dating = "dating" in p ? p.dating : p.app === "slop" ? p as DatingProfile360 : undefined;
+  const business = "business" in p ? p.business : p.app === "peon" ? p as BusinessProfile360 : undefined;
+  if (!dating && !business) return null;
+  return (
+    <>
+      {dating && <Disclosure name="domain-dating" summary="Dating"><DatingPanel id={id} p={dating} /></Disclosure>}
+      {business && <Disclosure name="domain-business" summary={`Business · ${business.applications.length} introductions`}><BusinessPanel p={business} /></Disclosure>}
+    </>
+  );
 }
 
-const PHOTO_TEXT: Record<SlopProfile360["photos"], string> = {
+const PHOTO_TEXT: Record<DatingProfile360["photos"], string> = {
   never_minor: "No photos: this member is under 18 or has no verified age. Photos and ratings are for verified adults only.",
   needs_verification: "No photos until the member's age (18+) is verified.",
   reason_required: "Photos: admin or safety, with a reason (logged).",
 };
 
-/** The slop panel: age, dating preferences, and the photos behind a logged reason. */
-function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
+/** The dating panel: age, dating preferences, and photos behind a logged reason. */
+function DatingPanel({ id, p }: { id: string; p: DatingProfile360 }) {
   const s = useStore();
   const [reason, setReason] = useState("");
   const [photos, setPhotos] = useState<MemberPhoto[] | null>(null);
@@ -815,7 +803,7 @@ function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
       <div>{p.adult ? "Adult" : "Under 18 or age unknown: never matched"} · age {p.ageVerified ? "verified" : "not verified"}</div>
       {p.prefs.hidden
         ? <p className={quiet}>Dating preferences hidden ({p.prefs.count} facts). {s.env?.capabilities.hiddenTruth ? "Simulated world: the truth lens shows hidden facts." : s.can("safety") ? "Reveal this member (logged) to see them." : "Safety or admin only."}</p>
-        : <SlopPrefsView prefs={p.prefs.prefs} />}
+        : <DatingPrefsView prefs={p.prefs.prefs} />}
       <p className={quiet}>{PHOTO_TEXT[p.photos]} Scores and ratings are never shown.</p>
       {view === "ShowPhotoForm" && (
         <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); show(); }}>
@@ -832,7 +820,7 @@ function SlopPanel({ id, p }: { id: string; p: SlopProfile360 }) {
 }
 
 /** The dating preferences the member gave, one line each. */
-function SlopPrefsView({ prefs }: { prefs: NonNullable<Extract<SlopProfile360["prefs"], { hidden: false }>["prefs"]> }) {
+function DatingPrefsView({ prefs }: { prefs: NonNullable<Extract<DatingProfile360["prefs"], { hidden: false }>["prefs"]> }) {
   const rows: [string, string | undefined][] = [
     ["Is", prefs.is], ["Seeks", prefs.seeks.join(", ") || undefined], ["Age range", prefs.ageRange?.join("-")],
     ["Where", [prefs.scope, prefs.maxMiles !== undefined ? `${prefs.maxMiles} mi` : undefined].filter(Boolean).join(" · ") || undefined], ["Goal", prefs.goal],
@@ -843,8 +831,8 @@ function SlopPrefsView({ prefs }: { prefs: NonNullable<Extract<SlopProfile360["p
   return <dl className="flex flex-col gap-1">{rows.filter(([, v]) => v).map(([k, v]) => <div className="flex gap-3" key={k}><dt className="w-24 shrink-0 text-muted-foreground">{k}</dt><dd className="min-w-0">{v}</dd></div>)}</dl>;
 }
 
-/** The peon panel: the job seat or candidate, the roles and the introductions. */
-function PeonPanel({ p }: { p: PeonProfile360 }) {
+/** The business panel: the hiring seat or candidate, roles, and introductions. */
+function BusinessPanel({ p }: { p: BusinessProfile360 }) {
   const s = useStore();
   return (
     <div className="flex flex-col gap-1">
@@ -887,16 +875,6 @@ function Truth({ d }: { d: MemberDetail }) {
   );
 }
 
-/** The score parts of a proposal: gains as green bars, costs as red bars, each from 0 to 1. */
-function ScoreParts({ c }: { c: ScoreComponents }) {
-  if (!hasScoreParts(c)) return null;
-  const rows = (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({
-    key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], tone: COMPONENT_SIGN[k] < 0 ? "destructive" as const : "ok" as const, title: `${k}: ${c[k]}`,
-  }));
-  return <MeterBars rows={rows} ranked={false} max={1} format={v => v.toFixed(2)} />;
-}
-
-/** One opportunity: its state, review actions, people, plan, times, booked plan, feedback, history and score. */
 function OpportunityPanel({ id }: { id: string }) {
   const s = useStore();
   const live = s.opps.get(id);
@@ -941,7 +919,7 @@ function OpportunityPanel({ id }: { id: string }) {
                 <MemberLink id={x} />
                 <StatusMark tone={tone(STATUS_TONE[status])} label={humanize(status)} showLabel />
                 {o.enjoyment[x] !== undefined && <span>enjoyed {pct(o.enjoyment[x]!)}</span>}
-                {m?.minor && <StatusMark tone="destructive" label="Under 18" showLabel title="Members under 18 are never introduced. This must not happen." />}
+                {m?.minor && <StatusMark tone={teenFriendApp(s.app) ? "warn" : "destructive"} label="Under 18" showLabel title={teenFriendApp(s.app) ? "Minor in friendship lane: strict teen age and review rules apply." : "Members under 18 are never introduced on this app."} />}
                 {OPEN.has(o.state) && isBusyElsewhere(o, x) && <StatusMark tone="warn" label="busy" showLabel title="In another open opportunity" />}
                 <TrustMark trust={m?.trust} />
               </div>
@@ -985,7 +963,7 @@ function OpportunityPanel({ id }: { id: string }) {
       {o.source !== "player" && o.components && (
         <Disclosure name="score" summary={<>Score {o.score.toFixed(2)}{d?.run ? <> · <Button variant="ghost" size="sm" className="h-auto px-1" onClick={e => { e.preventDefault(); store.setUI({ drawer: "engine", drawerOpen: true }); }}>run {d.run.id.slice(0, 4)} →</Button></> : null}</>}>
           {o.exploration && <p className={quiet} title="Picked partly to explore, not only exploit">exploration</p>}
-          <ScoreParts c={o.components} />
+          <ScoreParts c={o.components} gainTone="ok" />
         </Disclosure>
       )}
       {o.alternates.length > 0 && (

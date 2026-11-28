@@ -8,8 +8,8 @@ import { SQL } from "../../core/src/runtime/postgres.ts";
 import { signCalendarToken, verifyCalendarToken } from "../../core/src/runtime/calendar-token.ts";
 import { isDeepStrictEqual } from "node:util";
 import {
-  buildMeetupIcs, checkExternalEventT24Quorum, DAY, formatAnchorOrQuorumCancel, getCityIds, HOUR, isMinor, judgeLLM, judgeModelOf, LAUNCH_CITIES, LLMBudget, MeetupIcsLeakError, normalizeLumaWebhookEvent, providerKeyPresent, RealClock, recommenderLLM, verifyLumaWebhookSignature,
-  type City, type CityId, type Clock, type Intent, type LLM, type MemberId, type PersonaHealthStatus, type VenueStatus,
+  APP_TO_DOMAIN, buildMeetupIcs, checkExternalEventT24Quorum, DAY, DOMAIN_LABELS, DOMAIN_TO_APP, formatAnchorOrQuorumCancel, getCityIds, HOUR, isBusinessDomain, isDatingDomain, isMinor, judgeLLM, judgeModelOf, LAUNCH_CITIES, LLMBudget, MeetupIcsLeakError, normalizeLumaWebhookEvent, providerKeyPresent, RealClock, recommenderLLM, verifyLumaWebhookSignature,
+  type City, type CityId, type Clock, type DomainId, type Intent, type LLM, type MemberId, type PersonaHealthStatus, type VenueStatus,
 } from "@thenetwork/core";
 import { modelReviewJudge, REVIEW_JUDGE_REVIEWER, type ReviewJudge } from "../../engine/src/reviewJudge.ts";
 import { engineJudgeLimitsFromEnv, llmUsageForDay, ReviewJudgeWorker, reviewJudgeLimitsFromEnv } from "./review-judge.ts";
@@ -38,7 +38,7 @@ import * as BirthDay from "../../core/src/birth-date.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
 import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
 import { contributionHistoryReplayAllowed } from "../../core/src/generated/contributionHistory.ts";
-import { saveTravelPresence, travelOwner, travelPresenceCommand } from "./travel-presence.ts";
+import { cancelTravelPresence, saveTravelPresence, travelCancellationCommand, travelOwner, travelPresenceCommand } from "./travel-presence.ts";
 import { soloReplyReplayAllowed } from "../../core/src/generated/soloConcierge.ts";
 import { soloConciergeReply, soloConciergeRequest } from "./solo-concierge.ts";
 import { NetworkRuntime, type RuntimeHost, type StagedMemberInvitation } from "./runtime.ts";
@@ -109,8 +109,10 @@ import { CostLedger, costRatesFromEnv, dayOf, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, collectedReplyGuard, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { peerOpportunityContactRestricted } from "./peer-opportunity-admission.ts";
 import { parseRescheduleCommand, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
+import { tzForCity } from "../src/outreach.ts";
 import { interruptionFeedbackAnswer } from "../src/interruption-feedback.ts";
-import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
+import { APPS, defaultDomainsForBrand, isAppId, keywordApp, lookingFor, parseDomainCommand, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo, type DomainCommand } from "../../platform/src/apps.ts";
+import { isPostingCommand } from "../src/jobs.ts";
 import { Accounts, homeCityOf, joinProfileText, JoinReviewRequired, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type TeenAgeFacts, type Who } from "../../platform/src/accounts.ts";
 import {
   consumeMemberInvitation, findApprovedMemberInvitationReview, findMemberInvitation, holdMemberInvitation, InvitationUnavailable,
@@ -391,6 +393,9 @@ const isJoinNameToken = (word: string, appWords: readonly string[]): boolean => 
 const joinMembershipOf = (state: Membership["state"] | undefined): JoinMembership =>
   state === undefined ? "NoMembership" : state === "removed" ? "RemovedMembership" : state === "invited" ? "InvitedMembership" : "LiveMembership";
 
+const savedQuietHours = (value: unknown): readonly [number, number] | undefined =>
+  Array.isArray(value) && value.length === 2 && Number.isInteger(value[0]) && Number.isInteger(value[1]) ? [value[0], value[1]] : undefined;
+
 const bareJoinAge = (text: string, appWords: readonly string[]): number | undefined => {
   const nums = [...text.matchAll(/(?:^|[\s,.;:(])(\d{1,3})(?=$|[\s,.;:!)])/g)];
   const others = text.replace(/\d+/g, " ").replace(/[^\p{L}' -]+/gu, " ").split(/\s+/).map(w => w.replace(/^-+|-+$/g, "")).filter(Boolean).map(lower)
@@ -444,6 +449,19 @@ export function parseJoinText(text: string, appWords: readonly string[], nameOk:
   const words = nameText.replace(/[^\p{L}' -]+/gu, " ").split(/\s+/).map(w => w.replace(/^-+|-+$/g, "")).filter(Boolean);
   const name = ageOnly === undefined ? words.find(w => isJoinNameToken(w, appWords)) : undefined;
   return { ...(age !== undefined ? { age } : {}), ...(birthDate !== undefined ? { birthDate } : {}), ...unclear, ...(name ? { name: formatJoinName(name) } : {}), ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
+}
+
+const PARTICIPATION_CATEGORY_SUFFIX_RE = /\b(?:suggestions|offers|matches|introductions|intros|stuff|ones|plans)\s*[.!?]*$/i;
+const DOMAIN_COMMAND_PREFIX_RE = /^(?:(?:please|can\s+you|could\s+you|i\s+want\s+to|i'?d\s+like\s+to|i\s+would\s+like\s+to|let'?s)\s+)?(?:disable|turn\s+off|switch\s+off|stop|pause|remove|opt\s+out(?:\s+of)?|leave|drop|deactivate|no\s+more|enable|turn\s+on|switch\s+on|add|join|opt\s+in(?:\s+to)?|activate|start|resume|also\s+match(?:\s+me)?(?:\s+for)?|match\s+me(?:\s+for)?|sign\s+me\s+up(?:\s+for)?|include|open\s+up(?:\s+to)?)\b/i;
+
+export function smsDomainCommand(text: string): DomainCommand | null {
+  if (PARTICIPATION_CATEGORY_SUFFIX_RE.test(text.trim()) || isPostingCommand(text)) return null;
+  const cmd = parseDomainCommand(text);
+  if (!cmd) return null;
+  if (cmd.action === "list") return cmd;
+  const norm = text.normalize("NFKC").trim().replace(/[‘’]/g, "'");
+  if (norm.split(/\s+/).length > 12 || !DOMAIN_COMMAND_PREFIX_RE.test(norm)) return null;
+  return cmd;
 }
 
 class RouteAuthorityExpiredError extends Error {}
@@ -602,6 +620,11 @@ export class NetworkService implements RuntimeHost {
     this.reviewJudgeWorker = new ReviewJudgeWorker({
       clock: this.clock, judgeFor, limits: reviewLimits, log: this.log,
       teenFacts: (rt, memberId) => this.teenAccountFacts(rt, memberId),
+      activeCitiesFor: app => {
+        let count = 0;
+        for (const rt of this.runtimes.values()) if (rt.app.id === app) count++;
+        return count;
+      },
     });
     this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], hooks: this.hooks(), sql: this.sql });
     if (o.notify !== false) this.notify = new Notifier(o.notify ?? new PgNotifyStore(this.sql), { get: personId => this.notifyRecipient(personId) });
@@ -1363,7 +1386,7 @@ export class NetworkService implements RuntimeHost {
       const { status, minor } = (row?.opportunity_id ? teen.get(row.opportunity_id) : undefined) ?? { status: "unmarked", minor: false };
       const readerAgeAllowed = status === "current" || (readerMatchable && (status === "adult" || (status === "unmarked" && !minor)));
       if (!row?.bound && !readerMatchable) {
-        if (app === "slop") return [item.id, "InboxUpdateWithheld"];
+        if (isDatingDomain(app)) return [item.id, "InboxUpdateWithheld"];
         if (unsafeUnboundForMinor(item)) return [item.id, "InboxUpdateRetired"];
       }
       return [item.id, connectorUpdateOutcome(stillCurrent, readerAgeAllowed, !!row?.bound, passesLeakGate(item.summary))];
@@ -1486,6 +1509,7 @@ export class NetworkService implements RuntimeHost {
           personId,
           to,
           timeZone: resolveTimeZone(r.time_zone ?? undefined, rt.city) ?? "America/New_York",
+          quietHours: savedQuietHours(rawPrefs.quietHours),
           prefs,
           proactiveAllowed: !paused && !suppressProactiveForLocalAgent,
         };
@@ -1597,7 +1621,7 @@ export class NetworkService implements RuntimeHost {
       if (referral) await consumeMemberInvitation(tx, rt.app.id, referral, m.memberId, at, invitation?.verifiedRecipientHash);
       if (info.neighborhood || info.homeCity) await tx`insert into network.presence (app_id, member_id, city, type, areas) values (${rt.app.id}, ${m.memberId}, ${homeCity}, 'home', ${tx.array(info.neighborhood ? [info.neighborhood] : [], "TEXT")})`;
       // slop dates by distance from a zip (a coarse cell; agent_private, never shown).
-      if (info.zip && rt.app.id === "slop") {
+      if (info.zip && isDatingDomain(rt.app.id)) {
         await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, confidence, status, valid_from)
           values (${rt.app.id}, ${`${m.memberId}:join:zip`}, ${m.memberId}, 'fact', ${info.zip}, ${tx.array([`slop:zip:${info.zip}`], "TEXT")}, 'agent_private', 'said', 'web_join', 0.9, 'confirmed', ${now})
           on conflict (id) do nothing`;
@@ -1741,7 +1765,7 @@ export class NetworkService implements RuntimeHost {
     };
     const text = joinProfileText({ about: field("about"), neighborhood: field("neighborhood"), zip: field("zip") });
     if (!text) return;
-    await this.submitProfile(personId, rt.app.id, e164, text)
+    await this.submitProfile(personId, rt.app.id, e164, text, { allowOnboardingReply: true })
       .catch(e => this.log(`[join] profile not learned (${rt.id}): ${(e as Error).message}`));
   }
 
@@ -2282,6 +2306,7 @@ export class NetworkService implements RuntimeHost {
     const gatheringFollowup = !kw && gatheringFollowupRequested(ev.text);
     const surveyAnswer = !kw && interruptionFeedbackAnswer(ev.text);
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text, this.clock.now()) : undefined;
+    const travelCancel = !kw && this.inboundTurn() ? travelCancellationCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
     const threadRead = !kw && threadUpdateRequested(ev.text);
@@ -2293,7 +2318,7 @@ export class NetworkService implements RuntimeHost {
       && !gatheringRsvp && !gatheringFollowup && inboundReleasesHeldTexts(stopRequested, leavingId !== undefined);
     const signed = !!this.inboundTurn() && !banned;
     const reportReply = signed && !kw && !factCommand && !intentCommand && !controls && !calendar
-      && !gatheringRsvp && !gatheringFollowup && !surveyAnswer && !travel && !soloEvents && contributionPage === undefined;
+      && !gatheringRsvp && !gatheringFollowup && !surveyAnswer && !travel && !travelCancel && !soloEvents && contributionPage === undefined;
     const route = await this.route(ev, o.app, threadRead && signed, reportReply);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -2364,7 +2389,7 @@ export class NetworkService implements RuntimeHost {
       if (banned || !memberId || !turn || ev.mediaUrls?.length) return gatheringRsvp ? "gathering_rsvp" : "gathering_followup";
       return this.memberUnit(rt, memberId, ev, rowId, undefined);
     }
-    if (!kw && route.app === "peon" && peonSearchCommand(ev.text)) {
+    if (!kw && isBusinessDomain(route.app) && peonSearchCommand(ev.text)) {
       if (!memberId || !turn || ev.mediaUrls?.length) return "peon_candidate_search";
       return this.memberUnit(rt, memberId, ev, rowId, undefined);
     }
@@ -2387,7 +2412,7 @@ export class NetworkService implements RuntimeHost {
       const r = first ? await this.photoIntake.photosIn(e164, ev.mediaUrls, rowId) : { outcome: "duplicate" as const };
       if (r.outcome !== "not_member" && !ev.text.trim()) return "handled";
     }
-    if (ownText && memberId && turn && !leavingId && route.app === "slop"
+    if (ownText && memberId && turn && !leavingId && isDatingDomain(route.app)
       && await this.photoRelayFlow.turn({ rt, e164: ownText, memberId, personId: (await this.accounts.personFor(ownText))?.id, text: ev.text, rowId })) return "handled";
 
     // "leave <app>": that app only, on any line.
@@ -2435,8 +2460,8 @@ export class NetworkService implements RuntimeHost {
     if (!memberId && surveyAnswer) return "handled";
     const accountIntent = !!intentCommand
       && !refusedCommandPasses(intentCommand.kind, "target" in intentCommand && intentCommand.target.kind === "pending");
-    if (!memberId && (profileRead || accountIntent || controls || calendar || travel || soloEvents || contributionPage !== undefined)) {
-      return controls ? "participation_controls" : calendar ? "calendar_invite" : travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
+    if (!memberId && (profileRead || accountIntent || controls || calendar || travel || travelCancel || soloEvents || contributionPage !== undefined)) {
+      return controls ? "participation_controls" : calendar ? "calendar_invite" : travel || travelCancel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
     }
 
     if (kw === "start" && e164) {
@@ -2452,7 +2477,6 @@ export class NetworkService implements RuntimeHost {
       }
       if (legacyEngagement) await this.lineAdapter()?.engaged?.(ev.from);
       if (turn) turn.consent = { state: "opted_in", scope: "app", app: app.id, at };
-      if (memberId) await this.endPause(rt, memberId);
     }
 
     if (route.reportReply === "ambiguous") return "handled";
@@ -2464,6 +2488,15 @@ export class NetworkService implements RuntimeHost {
       if (!intentCommand && !controls && !calendar && !travel && !soloEvents && contributionPage === undefined && shouldReadLookingFor(!!kw, !!profileRead, app.id === "ntwrk") && e164 && (await this.pendingOf(e164, "looking_for"))) {
         const wants = lookingFor(ev.text).filter(a => namedOtherApp(a, a !== "ntwrk" && !!this.runtimeFor(a)));
         if (wants.length) return this.enroll(rt, memberId, e164, wants, ev, rowId);
+      }
+      const domainCmd = !kw && !leavingId && !profileRead && !intentCommand && !calendar && !travel && !soloEvents
+        && contributionPage === undefined && !factCommand && !gatheringRsvp && !gatheringFollowup && !surveyAnswer
+        && !threadRead && (!controls || controls.kind === "category") && !this.namedApp(ev.text) && e164
+        ? smsDomainCommand(ev.text)
+        : null;
+      if (domainCmd && e164) {
+        const domainOutcome = await this.handleDomainCommand(rt, app, memberId, e164, domainCmd, ev, rowId);
+        if (domainOutcome) return domainOutcome;
       }
       // After STOP the member's texts still reach the Network (a report is never dropped), but its replies are
       // refused: the person gets one hint instead (founder decision 2026-10-11, #22).
@@ -2550,7 +2583,7 @@ export class NetworkService implements RuntimeHost {
    * booked date, not a block or a report (InboundMessage.source). Only for a live membership; it
    * never creates a member. The text is the member's.
    */
-  async submitProfile(personId: string, appId: AppId, e164: string, text: string): Promise<"accepted" | "not_member"> {
+  async submitProfile(personId: string, appId: AppId, e164: string, text: string, options?: { allowOnboardingReply?: boolean }): Promise<"accepted" | "not_member"> {
     const m = await this.people.getMembership(personId, appId);
     const rt = m && await this.runtimeOfMember(appId, m.memberId);
     if (!m || !rt || !["active", "onboarding"].includes(m.state)) return "not_member";
@@ -2563,7 +2596,7 @@ export class NetworkService implements RuntimeHost {
     const ev: Extract<ChannelEvent, { kind: "message" }> = {
       kind: "message", channel: "imessage" as never, messageId: rowId, from: e164, to: null, chatId: e164, isGroup: false, text, mediaUrls: [], transport: "imessage" as never, receivedAt: t,
     };
-    await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false);
+    await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false, undefined, options?.allowOnboardingReply);
     await rt.projectRecordedAges(m.memberId as MemberId);
     return "accepted";
   }
@@ -2819,9 +2852,9 @@ export class NetworkService implements RuntimeHost {
   }
 
   /** A member's message (or keyword) as one unit of work on their app's network. */
-  private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true, reportReply?: SharedReportChoiceOwner): Promise<InboundOutcome> {
+  private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true, reportReply?: SharedReportChoiceOwner, allowOnboardingReply = false): Promise<InboundOutcome> {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
-    const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread, reportReply);
+    const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread, reportReply, allowOnboardingReply);
     if (out === "handled") {
       await this.syncAutoSafetyQuarantine(rt, memberId).catch(e => this.log(`[safety] quarantine sync failed (${rt.id}): ${(e as Error).message}`));
     }
@@ -2834,7 +2867,7 @@ export class NetworkService implements RuntimeHost {
     return out;
   }
 
-  private memberUnit(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromAssistant = false, reportReply?: SharedReportChoiceOwner): Promise<InboundOutcome> {
+  private memberUnit(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromAssistant = false, reportReply?: SharedReportChoiceOwner, allowOnboardingReply = false): Promise<InboundOutcome> {
     const keyword = kw === "stop" || kw === "stop_all" ? "STOP" : kw === "start" ? "START" : kw === "help" ? "HELP" : undefined;
     return rt.unitOfWork(async n => {
       if ((await rt.scoped(tx => tx`select 1 from network.messages where app_id = ${rt.app.id} and id = ${rowId}`)).length) return "duplicate" as const;
@@ -2856,7 +2889,7 @@ export class NetworkService implements RuntimeHost {
         const membership = await this.people.getMembership(person.id, rt.app.id);
         if (membership?.memberId !== memberId || membership.state !== "active" || membership.review !== null) return "ignored";
       }
-      const peonSearch = commandText && rt.app.id === "peon" && peonSearchCommand(ev.text);
+      const peonSearch = commandText && isBusinessDomain(rt.app.id) && peonSearchCommand(ev.text);
       if (peonSearch) {
         const reason = "peon_candidate_search" as const;
         if (!signedDirect || !rt.signedMemberTurn(memberId, rowId)) return reason;
@@ -2960,10 +2993,11 @@ export class NetworkService implements RuntimeHost {
         return "handled";
       }
       const travel = signedDirect ? travelPresenceCommand(ev.text, this.clock.now()) : undefined;
+      const travelCancel = signedDirect ? travelCancellationCommand(ev.text) : undefined;
       const soloEvents = signedDirect ? soloConciergeRequest(ev.text) : undefined;
       const contributionPage = signedDirect ? contributionHistoryRequest(ev.text) : undefined;
-      if (travel || soloEvents || contributionPage !== undefined) {
-        const reason = travel ? "travel_presence" : soloEvents ? "solo_events" : "contribution_history";
+      if (travel || travelCancel || soloEvents || contributionPage !== undefined) {
+        const reason = travel || travelCancel ? "travel_presence" : soloEvents ? "solo_events" : "contribution_history";
         const e164 = normalizePhone(ev.from);
         if (e164) rt.unit.memberCommand = async tx => {
           const owner = { app: rt.app, memberId, e164 };
@@ -2971,6 +3005,12 @@ export class NetworkService implements RuntimeHost {
           const now = this.clock.now();
           if (travel) {
             const body = await saveTravelPresence(tx, accounts, owner, travel, now);
+            if (body === undefined) return;
+            rt.unit.inbound = inbound;
+            rt.unit.atomicReply = "travel_presence";
+            rt.collectedMemberReply(memberId, `sys:${rowId}`, body, "travel_presence");
+          } else if (travelCancel) {
+            const body = await cancelTravelPresence(tx, accounts, owner, travelCancel.city, now);
             if (body === undefined) return;
             rt.unit.inbound = inbound;
             rt.unit.atomicReply = "travel_presence";
@@ -3055,7 +3095,7 @@ export class NetworkService implements RuntimeHost {
       try {
         disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: signedDirect ? Math.min(t, ev.receivedAt) : t, channel,
           ...(signedDirect ? { signedReceivedAt: ev.receivedAt } : {}),
-          ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const } : {}) }, stageIntent, reportReply?.choice);
+          ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const, ...(allowOnboardingReply ? { allowOnboardingReply: true } : {}) } : {}) }, stageIntent, reportReply?.choice);
       } finally { rt.replyingTo = undefined; }
       if (rt.unit.memberCommand) return "cofounder_intent" as const;
       // Carrier keywords: the app's own confirmation (packages/platform apps.ts). START gets the Network's own welcome back.
@@ -3073,7 +3113,7 @@ export class NetworkService implements RuntimeHost {
       }
       return keyword || systemReply ? "handled" as const : disposition;
     }, !fromAssistant && !kw && !calendarPreferenceCommand(ev.text) && this.inboundTurn()?.memberId === memberId
-      ? { kind: "member", memberId, reschedule: parseRescheduleCommand(ev.text) } : undefined);
+      ? { kind: "member", memberId, reschedule: parseRescheduleCommand(ev.text, tzForCity(rt.city)) } : undefined);
   }
 
   private async cofounderIntentOwner(tx: SQL, rt: NetworkRuntime, memberId: MemberId, e164: string): Promise<boolean> {
@@ -3335,17 +3375,6 @@ export class NetworkService implements RuntimeHost {
     return at;
   }
 
-  private async endPause(rt: NetworkRuntime, memberId: MemberId): Promise<void> {
-    await rt.scoped(async tx => {
-      const ended = await tx`update network.members set participation_window = case when participation_window->>'state' = 'paused' then null else participation_window end,
-        participation_state = case when participation_state = 'paused' then 'normal' else participation_state end
-        where app_id = ${rt.app.id} and id = ${memberId} and (participation_state = 'paused' or participation_window->>'state' = 'paused') returning id`;
-      if (!ended.length) return;
-      await tx`insert into network.events(app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
-        values (${rt.app.id}, ${new Date(this.clock.now())}, 'member', ${memberId}, 'member_state_requested', 'member', ${memberId}, ${{ state: "open", from: null, until: null, source: "text" }}::jsonb)`;
-    });
-  }
-
   /**
    * The time of a consent event that an inbound message causes. In a signed turn it is the gateway's
    * receipt time (never later than now), so the ledger orders STOP, START, leave and joins by when the
@@ -3496,19 +3525,34 @@ export class NetworkService implements RuntimeHost {
     const stored = stepTextJoin(ageCheck, { type: "recordTextMembership", membershipActive: membership.state === "active" });
     if (stored.phase !== "AwaitingWelcome") return "joined";
     rt = this.runtimeForHome(app.id, homeCity ?? rt.city) ?? rt;
-    if (!await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age),
+    const effectiveJoinAge = Math.min(age, check.effective ?? age);
+    if (!await this.createMember(rt, membership, { age: effectiveJoinAge,
       recordedAge: Math.min(age, known.independent ?? age), firstName: name, homeCity })) return "held";
     if (!optedIn) { await this.stopped(app, who.id, "app", undefined, e164); return "joined"; }
+    if (effectiveJoinAge < ADULT_AGE) {
+      await this.people.disableMemberDomains(who.id, ["dating", "business"], "age_lowered", t);
+    }
     const welcomed = stepTextJoin(stored, { type: "recordWelcome", hasOtherApp: others.length > 0, sharedNetwork, invited });
+    if (welcomed.phase !== "JoinedWithLookingFor") {
+      for (const domain of defaultDomainsForBrand(app.id, effectiveJoinAge)) {
+        await this.people.setMemberDomain({ personId: who.id, domain, enabled: true, originBrand: app.id, source: "onboarding", at: t });
+      }
+    }
     if (welcomed.phase === "JoinedWithLookingFor") {
-      const askText = lookingForAsk(Math.min(age, check.effective ?? age));
-      const greeting = `Hi ${name}, welcome to ${app.name}.`;
-      await rt.unitOfWork(async n => {
-        n.registerJoined(membership.memberId as MemberId);
-        rt.unit.inbound = { id: rowId, member_id: membership.memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
-        rt.system(membership.memberId, `welcome:${rowId}`, greeting, "reply", "info");
-        rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info");
-      });
+      const effectiveAge = Math.min(age, check.effective ?? age);
+      const askText = lookingForAsk(effectiveAge);
+      if (isMinor(effectiveAge)) {
+        await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
+        await rt.unitOfWork(() => { rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info"); });
+      } else {
+        const greeting = `Hi ${name}, welcome to ${app.name}.`;
+        await rt.unitOfWork(async n => {
+          n.registerJoined(membership.memberId as MemberId);
+          rt.unit.inbound = { id: rowId, member_id: membership.memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
+          rt.system(membership.memberId, `welcome:${rowId}`, greeting, "reply", "info");
+          rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info");
+        });
+      }
       await this.people.putPending({ phoneHash: key, kind: "looking_for", app: "ntwrk", name: null, age: null, at: t });
     } else {
       await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
@@ -3554,12 +3598,157 @@ export class NetworkService implements RuntimeHost {
         }
         joined.push(app);
       }
+      const joinedDomains = joined.map(a => APP_TO_DOMAIN[a.id]).filter((d): d is DomainId => d !== null);
+      if (joinedDomains.length) {
+        const held = (await this.accounts.held(e164)) || person.deletedAt !== null || (await this.accounts.hasActiveSafetyHoldOrQuarantine(person.id));
+        await this.accounts.updateDomains({
+          personId: person.id,
+          e164,
+          enable: joinedDomains,
+          originBrand: "ntwrk",
+          source: "looking_for",
+          banned,
+          held,
+        });
+      }
     }
     if (turn && own) { turn.app = own.app; turn.memberId = own.memberId; }
     await this.people.deletePending(key, "looking_for");
     return rt.unitOfWork(async () => {
       rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
       if (joined.length) rt.system(memberId, `sys:${rowId}`, enrolledText(joined), "reply", "info");
+      return "handled" as const;
+    });
+  }
+
+  private async handleDomainCommand(
+    rt: NetworkRuntime,
+    app: AppInfo,
+    memberId: MemberId,
+    e164: string,
+    cmd: DomainCommand,
+    ev: Extract<ChannelEvent, { kind: "message" }>,
+    rowId: string,
+  ): Promise<InboundOutcome | undefined> {
+    const person = await this.accounts.personFor(e164);
+    if (!person) return undefined;
+    if (await this.people.isSuppressed(this.phoneKey(e164)) || !(await this.accounts.optedIn(app.id, e164))) return undefined;
+    const t = this.clock.now();
+    const banned = await this.accounts.banned(e164, person);
+    const held = (await this.accounts.held(e164)) || person.deletedAt !== null || (await this.accounts.hasActiveSafetyHoldOrQuarantine(person.id));
+    const { effective: lowest, independent } = await this.accounts.knownAges(e164, person);
+    const formatList = (domains: readonly DomainId[]) => (domains.length ? domains.map(d => DOMAIN_LABELS[d]).join(", ") : "none");
+    let body: string;
+
+    if (cmd.action === "list") {
+      const { enabledDomains, availableDomains } = await this.accounts.memberDomains(person.id, e164);
+      const addable = availableDomains.filter(d => !enabledDomains.includes(d));
+      const enabledText = formatList(enabledDomains);
+      if (addable.length) {
+        body = `Active domains: ${enabledText}. You can also add: ${formatList(addable)} (reply "enable ${addable[0]}").`;
+      } else if (!canBeMatched(lowest)) {
+        body = `Active domains: ${enabledText}. Friendship is the only domain available while you're under 18.`;
+      } else {
+        body = `Active domains: ${enabledText}. All available domains are active.`;
+      }
+    } else if (cmd.action === "enable") {
+      const existingMemberships = await this.people.memberships(person.id);
+      const firstName = existingMemberships.find(m => m.state !== "removed" && m.firstName)?.firstName ?? "there";
+      const homeCity = existingMemberships.map(m => homeCityOf(m.profile.homeCity)).find(Boolean);
+      const turn = this.inboundTurn(), own = turn && { app: turn.app, memberId: turn.memberId };
+      const res = await this.accounts.updateDomains({
+        personId: person.id,
+        e164,
+        enable: cmd.domains,
+        originBrand: app.id,
+        source: "sms_command",
+        banned,
+        held,
+        onProvisionMembership: async membership => {
+          await this.accounts.recordConsent({
+            e164,
+            app: membership.app,
+            state: "opted_in",
+            source: "sms_domain_enable",
+            wording: this.apps[membership.app].consent.text,
+            wordingVersion: this.apps[membership.app].consent.version,
+            ref: `${rowId}:${membership.app}`,
+            at: this.consentAt(ev),
+          }, person.id);
+          const targetRt = this.runtimeForHome(membership.app, homeCity ?? this.runtimeFor(membership.app)?.city ?? "")
+            ?? this.runtimeFor(membership.app);
+          if (!targetRt) return;
+          const existingRows = await targetRt.scoped(tx => tx`select id from network.members where app_id = ${membership.app} and id = ${membership.memberId}`);
+          if (existingRows.length === 0) {
+            await this.createMember(targetRt, membership, {
+              age: lowest ?? ADULT_AGE,
+              recordedAge: independent ?? null,
+              firstName,
+              homeCity,
+            });
+          } else {
+            await targetRt.scoped(async tx => {
+              await tx`update network.members set account_status = 'active', opted_out = false,
+                participation_state = case when participation_state = 'paused' then 'normal' else participation_state end,
+                participation_window = case when participation_window->>'state' = 'paused' then null else participation_window end
+                where app_id = ${membership.app} and id = ${membership.memberId}`;
+            });
+          }
+          await targetRt.unitOfWork(n => { n.registerJoined(membership.memberId as MemberId); });
+        },
+      });
+      if (turn && own) { turn.app = own.app; turn.memberId = own.memberId; }
+      const minorBlocked = res.blocked.filter(b => b.reason === "minor_restricted" || b.reason === "under_13");
+      const holdBlocked = res.blocked.filter(b => b.reason === "banned" || b.reason === "held");
+      const activeText = formatList(res.enabledDomains);
+      if (res.applied.enabled.length && !minorBlocked.length) {
+        body = `Enabled ${formatList(res.applied.enabled)}. Active domains: ${activeText}.`;
+      } else if (res.applied.enabled.length && minorBlocked.length) {
+        body = `Enabled ${formatList(res.applied.enabled)}. Since you're under 18, ${minorBlocked.map(b => DOMAIN_LABELS[b.domain].toLowerCase()).join(" and ")} matching isn't available—only friendship introductions are available for teens. Active domains: ${activeText}.`;
+      } else if (minorBlocked.length) {
+        body = `Since you're under 18, only friendship introductions are available right now—I can't enable ${minorBlocked.map(b => DOMAIN_LABELS[b.domain].toLowerCase()).join(" or ")} matching. Active domains: ${activeText}.`;
+      } else if (holdBlocked.length) {
+        body = "Your account is under review, so I can't update your matching domains right now.";
+      } else {
+        body = `Active domains: ${activeText}.`;
+      }
+    } else {
+      const res = await this.accounts.updateDomains({
+        personId: person.id,
+        e164,
+        disable: cmd.domains,
+        originBrand: app.id,
+        source: "sms_command",
+        banned,
+        held,
+      });
+      for (const domain of res.applied.disabled) {
+        const backingApp = DOMAIN_TO_APP[domain];
+        const m = await this.people.getMembership(person.id, backingApp);
+        if (!m) continue;
+        const targetRt = (await this.runtimeOfMember(backingApp, m.memberId)) ?? this.runtimeFor(backingApp);
+        if (!targetRt) continue;
+        await targetRt.scoped(async tx => {
+          const paused = await tx`update network.members set participation_state = 'paused'
+            where app_id = ${backingApp} and id = ${m.memberId} and participation_state is distinct from 'paused' returning id`;
+          if (!paused.length) return;
+          await tx`insert into network.events(app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
+            values (${backingApp}, ${new Date(t)}, 'member', ${m.memberId}, 'member_state_requested', 'member', ${m.memberId}, ${{ state: "paused", from: null, until: null, source: "domain_disable" }}::jsonb)`;
+        });
+      }
+      if (res.blocked.length) {
+        body = "Your account is under review, so I can't update your matching domains right now.";
+      } else {
+        const activeText = formatList(res.enabledDomains);
+        body = res.enabledDomains.length
+          ? `Disabled ${formatList(res.applied.disabled)}. Active domains: ${activeText}.`
+          : `Disabled ${formatList(res.applied.disabled)}. You have no active domains right now. Reply "enable friendship" anytime to turn one back on.`;
+      }
+    }
+
+    return rt.unitOfWork(async () => {
+      rt.unit.inbound = { id: rowId, member_id: memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(this.clock.now()) };
+      rt.guardedSystemReply(memberId, `sys:${rowId}`, body, "domain_update");
       return "handled" as const;
     });
   }
@@ -4520,7 +4709,7 @@ export class NetworkService implements RuntimeHost {
           bookingRuntime.gatheringRepeatRepliesCurrent(tx, memberId, input.from, replyIds, handled.replies))) {
           return json({ error: "turn_gathering_repeat_changed", retryable: false }, 409);
         }
-        if (bookingRuntime?.app.id === "peon" && !await bookingRuntime.scoped(tx =>
+        if (bookingRuntime && isBusinessDomain(bookingRuntime.app.id) && !await bookingRuntime.scoped(tx =>
           bookingRuntime.peonHireRepliesCurrent(tx, memberId, replyIds, handled.replies))) {
           return json({ error: "turn_peon_search_changed", retryable: false }, 409);
         }
@@ -4575,7 +4764,7 @@ export class NetworkService implements RuntimeHost {
       }
       if (handled.reason === "peon_candidate_search" && handled.replies.length) {
         const memberId = handled.memberId;
-        const rt = handled.app === "peon" && memberId ? await this.runtimeOfMember("peon", memberId) : undefined;
+        const rt = handled.app && isBusinessDomain(handled.app) && memberId ? await this.runtimeOfMember(handled.app, memberId) : undefined;
         const command = peonSearchCommand(input.text);
         const current = rt && memberId && command && handled.replies.length === 1 && await rt.scoped(tx =>
           peonSearchReplyCurrent(tx, this.accountsFor(tx), { app: rt.app, memberId, e164: input.from }, command, handled.replies[0]!, this.clock.now()));
@@ -5045,7 +5234,7 @@ export class NetworkService implements RuntimeHost {
       }
       if (path === "/matchmakers") {
         if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
-        if (rt.app.id === "peon") return json({ ok: false, code: "forbidden", error: "matchmakers unavailable on peon" }, 403);
+        if (isBusinessDomain(rt.app.id)) return json({ ok: false, code: "forbidden", error: "matchmakers unavailable on peon" }, 403);
         const city = url.searchParams.get("city")?.trim() || undefined;
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_matchmakers", mode: "real", ok: true, app: rt.app.id, ...(city ? { detail: { city } } : {}) });
         return json({ ok: true, personas: await this.meetup.listMatchmakerPersonas(city, rt.app.id) });
@@ -5053,7 +5242,7 @@ export class NetworkService implements RuntimeHost {
       const matchmakerStatusPath = path.match(/^\/matchmakers\/([^/]+)\/status$/);
       if (matchmakerStatusPath) {
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
-        if (rt.app.id === "peon") return json({ ok: false, code: "forbidden", error: "matchmakers unavailable on peon" }, 403);
+        if (isBusinessDomain(rt.app.id)) return json({ ok: false, code: "forbidden", error: "matchmakers unavailable on peon" }, 403);
         let personaId: string;
         try { personaId = decodeURIComponent(matchmakerStatusPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
         const b = await body(req) as Record<string, unknown> | undefined;

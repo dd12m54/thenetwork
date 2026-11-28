@@ -18,7 +18,7 @@ test("the console keeps the current view, live feed, and review draft", async ()
   const opportunity = (id: string, deadline: number): Partial<ObsOpportunity> => ({
     id, state: "IN_REVIEW", participants: [id], explanations: { [id]: `${id} draft` }, alternates: [],
     objective: `${id} objective`, kind: "intro", score: 0, source: "player", createdAt: 0, updatedAt: 0,
-    review: { queuedAt: 0, deadline, rerolls: 0 },
+    review: { queuedAt: 0, deadline, rerolls: 0, exceptionReason: "other_concern" },
   });
   const api = await serveHttp({
     hostname: "127.0.0.1", port: 0,
@@ -123,6 +123,18 @@ test("the console keeps the current view, live feed, and review draft", async ()
     };
     try {
       await act(async () => { root.render(createElement(ReviewQueue)); });
+      const enter = () => new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      const transportTarget = window.document.createElement("button");
+      window.document.body.append(transportTarget);
+      const buttonEnter = enter();
+      await act(async () => { transportTarget.dispatchEvent(buttonEnter); });
+      expect(buttonEnter.defaultPrevented).toBe(false);
+      expect(reviewStore.ui.focus).toBeNull();
+      transportTarget.remove();
+      const shortcutEnter = enter();
+      await act(async () => { box.dispatchEvent(shortcutEnter); await sleep(40); });
+      expect(shortcutEnter.defaultPrevented).toBe(true);
+      expect(reviewStore.ui.focus).toEqual({ kind: "opportunity", id: "a" });
       await writeNote("first card note");
       await act(async () => { reviewStore.focus({ kind: "opportunity", id: "b" }); await sleep(40); });
       // spec/staffReview.md, "A changed card or revision starts a fresh draft"
@@ -171,7 +183,7 @@ test("real plan approval waits for the visible revision on click and keyboard", 
     id, kind: "group", source: "network", origin: "planner", generator: "plan", category: "social", city: "nyc",
     objective: "A hike", score: 0.5, explanations: {}, exploration: false, participants: ["a", "b", "c"], alternates: ["d", "e"],
     state: "IN_REVIEW", status: {}, enjoyment: {}, createdAt: now, updatedAt: now,
-    review: { queuedAt: now, deadline: now + 10_000 + revision, rerolls: revision },
+    review: { queuedAt: now, deadline: now + 10_000 + revision, rerolls: revision, exceptionReason: "other_concern" },
   });
   const times = [{ start: now + DAY, end: now + DAY + HOUR }, { start: now + 3 * DAY, end: now + 3 * DAY + HOUR }];
   const reply = (revision: number, name: string): StaffPlanPreview => ({

@@ -1,7 +1,7 @@
 // Hard filters (Section 33.5). Hard constraints are never traded for score (33.1): a candidate
 // failing any of these is dropped before scoring, and the reason is counted in the run funnel.
 import type { Category, Member, MemberId } from "@thenetwork/core";
-import { ADULT_AGE as CORE_ADULT_AGE, ageSideOf, canBeMatched, DAY, HOUR, latestDayKeyOf, type AgeSide } from "@thenetwork/core";
+import { ADULT_AGE as CORE_ADULT_AGE, ageSideOf, canBeMatched, DAY, HOUR, isBusinessDomain, isDatingDomain, isFriendshipDomain, latestDayKeyOf, type AgeSide } from "@thenetwork/core";
 import { candidateBackfillAllowed, initial, step, type CheckPhase } from "../../core/src/generated/candidateScreening.ts";
 import {
   groupAgeAllowed, rosterHasMinor, teenFriendCandidate, teenFriendFormat, teenFriendRole, teenIntroShape, teenRosterSizeAllowed, viaAllowedForRoster,
@@ -56,8 +56,13 @@ export function involvedMembers(c: Pick<Candidate, "participants" | "alternates"
   return [...c.participants, ...(c.alternates ?? []), ...(c.via ? [c.via] : [])];
 }
 
-const friendshipLaneOf = (w: World, category: Category, lane: MatchLane | undefined): boolean =>
-  teenFriendCategory(w.pack.id, category) && (lane === undefined || teenFriendLane(w.pack.id, lane));
+const packAppOf = (w: World): string =>
+  isDatingDomain(w.pack.id) ? "slop" : isBusinessDomain(w.pack.id) ? "peon" : isFriendshipDomain(w.pack.id) ? "friends" : w.pack.id;
+
+const friendshipLaneOf = (w: World, category: Category, lane: MatchLane | undefined): boolean => {
+  const app = packAppOf(w);
+  return teenFriendCategory(app, category) && (lane === undefined || teenFriendLane(app, lane));
+};
 
 const belowMatchAge = (w: World, age: number): boolean =>
   isMinorAge(age) || !(age >= w.cfg.ageMin) || !(age >= w.pack.eligibility.minMatchAge);
@@ -66,7 +71,7 @@ export function teenCandidateIn(w: World, id: MemberId, category: Category): boo
   const mi = w.get(id);
   if (!mi) return false;
   const side = ageSideOf(mi.m);
-  return teenFriendCandidate(side.adult, side.ready, side.birthKey, w.minDay, w.maxDay, w.teenIntros, teenFriendCategory(w.pack.id, category));
+  return teenFriendCandidate(side.adult, side.ready, side.birthKey, w.minDay, w.maxDay, w.teenIntros, teenFriendCategory(packAppOf(w), category));
 }
 
 const ageSidesOf = (w: World, ids: readonly MemberId[]): AgeSide[] =>
@@ -95,7 +100,7 @@ export function candidateAgeReason(w: World, c: AgeCheckedCandidate): "underage"
   const { roles, format, generator } = c;
   if (roles === undefined || format === undefined || generator === undefined) return "underage";
   const everyRoleTeen = roster.every(id => { const role = roles[id]; return role !== undefined && teenFriendRole(role); });
-  return teenGenerator(w.pack.id, generator)
+  return teenGenerator(packAppOf(w), generator)
     && teenIntroShape(friendshipLane, format, everyRoleTeen, c.via !== undefined, c.anchor?.type === "event")
     && teenRosterSizeAllowed(true, roster.length) ? null : "underage";
 }
@@ -103,8 +108,9 @@ export function candidateAgeReason(w: World, c: AgeCheckedCandidate): "underage"
 export function teenGroupReason(w: World, ids: readonly MemberId[], category: Category, meetingEnd: number): "underage" | null {
   const roster = [...new Set(ids)];
   if (!rosterHasMinor(ageSidesOf(w, roster))) return null;
-  if (!teenGroupPlanApp(w.pack.id) || !teenRosterSizeAllowed(true, roster.length)) return "underage";
-  return rosterAgeReason(w, roster, teenFriendCategory(w.pack.id, category), meetingMaxDay(w, [meetingEnd]));
+  const app = packAppOf(w);
+  if (!teenGroupPlanApp(app) || !teenRosterSizeAllowed(true, roster.length)) return "underage";
+  return rosterAgeReason(w, roster, teenFriendCategory(app, category), meetingMaxDay(w, [meetingEnd]));
 }
 
 const teenSeat = (w: World, id: MemberId, c: Pick<MemberCheck, "category" | "lane" | "role" | "format">): boolean =>
@@ -349,15 +355,16 @@ const CHILD_AGE = "(?:1[0-7]|[1-9]|one|two|three|four|five|six|seven|eight|nine|
   + "\\s*-?\\s*(?:y[./]?\\s*o\\.?|y(?:rs?)?[\\s.-]?olds?|years?[\\s.-]?olds?)"
   + "(?!\\.?\\s+(?:startup|company|business|building|house|car|dog|cat|wine|whisky|whiskey)\\b)";
 const CHILD = "(?:" + CHILD_NOUN + "|" + CHILD_AGE + ")(?![a-z0-9])";
-const CHILD_PICKUP = "(?:my|our|your|their|his|her|the)\\s+(?:(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s+)?"
+const CHILD_COUNT = "(?:(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s+)?";
+const CHILD_PICKUP = "(?:my|our|your|their|his|her|the)\\s+" + CHILD_COUNT
   + CHILD + "(?:\\s+" + CHILD_NOUN + ")?";
 export const SAFETY_RISK_PATTERNS: readonly string[] = [
   // Care, transport or time alone with someone's child; a child's age may be written as digits or
   // words ("my 6 year old", "my 8yo", "15 y/o", "twelve-year-old").
   `\\b(watch(ing)?|sit(ting)?|mind(ing)?|look(ing)? after|care for|caring for|stay with|hang out with|pick(ing)? up|drop(ping)? off|tutor\\w*|mentor\\w*|teach\\w*|coach\\w*|alone with)\\b(\\W+\\w+){0,3}?\\W+(my|our|your|their|his|her)\\s+${CHILD}`,
   "\\b(?:pick(?:ing)?\\s+" + CHILD_PICKUP + "\\s+up|drop(?:ping)?\\s+" + CHILD_PICKUP + "\\s+off)\\b",
-  `\\b(my|our|your|their)\\s+${CHILD}\\b(\\W+\\w+){0,4}?\\W+(a )?(ride|lift|sitter|nanny|tutor|mentor|coach)\\b`,
-  `\\b(ride|rides|lift|sitter|nanny)\\s+(for|to)\\s+(my|our|your|their)\\s+${CHILD}`,
+  `\\b(my|our|your|their)\\s+${CHILD_COUNT}${CHILD}\\b(\\W+\\w+){0,4}?\\W+(a )?(ride|lift|sitter|nanny|tutor|mentor|coach)\\b`,
+  `\\b(ride|rides|lift|sitter|nanny)\\s+(for|to)\\s+(my|our|your|their)\\s+${CHILD_COUNT}${CHILD}`,
   "\\bbaby[\\s-]?sit", "(?<!(dog|pet|cat|plant|house|bird)[\\s-]?)\\bsitters?\\b",
   "\\b(school|daycare|day care|preschool|kindergarten)[\\s-]?(pick[\\s-]?ups?|drop[\\s-]?offs?|run)\\b",
   "\\bfrom (school|daycare|day care|preschool|kindergarten)\\b",
@@ -368,6 +375,7 @@ export const SAFETY_RISK_PATTERNS: readonly string[] = [
   "\\b(guaranteed returns?|crypto (signals|opportunity)|forex (signals|opportunity)|investment opportunity)\\b",
   // Drugs (named substances; "diet coke", "mushroom foraging" and "joint venture" pass).
   "\\b(edibles?|molly|mdma|ecstasy|ketamine|shrooms|magic mushrooms?|psilocybin|lsd|adderall|xanax|oxy(codone|contin)?|percocet|opioids?|meth|heroin|fentanyl|thc|dabs?|blunts?|420|psychedelics?)\\b",
+  "\\b(marijuana|(meth)?amphetamines?|ritalin|opiates?|morphine|codeine|hydrocodone|vicodin|valium|klonopin|benzos|benzodiazepines?|ayahuasca|mescaline)\\b",
   "(?<!diet |cherry |vanilla )\\b(coke|cocaine)\\b", "\\b(my|your|his|her|their) (meds|pills)\\b",
   // Medical escort / care.
   "\\b(ride|rides|lift|drive|take me|go with me|come with me|accompany me)\\b(\\W+\\w+){0,4}?\\W+(clinic|hospital|surgery|procedure|chemo|chemotherapy|dialysis)\\b",
@@ -381,6 +389,21 @@ export const HOME_ENTRY_PATTERNS: readonly string[] = [
   "\\b(move|moving|movers?)\\b", "\\bcome over\\b",
 ];
 
+const SAFETY_RES = SAFETY_RISK_PATTERNS.map(p => new RegExp(p));
+const CHILD_CARE_VERB = "(?:watch|baby[\\s-]?sit|mind|look after|care for|stay with|pick up|drop off|drive|tutor|teach|coach|mentor)";
+const REQUEST_FOR_OTHER = "(?:"
+  + "\\b(?:find(?:ing)?|look(?:ing)?\\s+for|search(?:ing)?\\s+for|seek(?:ing)?|connect(?:\\s+(?:me|us))?\\s+with|intro(?:duce)?(?:\\s+(?:me|us))?\\s+to|match(?:\\s+(?:me|us))?\\s+with|know)\\s+"
+    + "(?:some(?:one|body)|any(?:one|body)|people|folks|an?\\s+(?!time|way|chance|minute|moment|break|reason|place|spot|car|ride)\\w+(?:\\s+\\w+){0,2})(?:\\s+(?:who|that)\\s+[^.?!,;]{1,40})?\\s+"
+    + "(?:(?:available|free|willing|able|down)\\s+to|to|who\\s+(?:can|could|would|will))"
+  + "|\\b(?:need|want)(?:s|ing)?\\s+(?:some(?:one|body)|any(?:one|body))(?:\\s+(?:who|that)\\s+[^.?!,;]{1,40})?\\s+(?:(?:available|free|willing|able|down)\\s+to|to|who\\s+(?:can|could|would|will))"
+  + "|\\b(?:(?:can|could|would|will)\\s+(?:you|some(?:one|body)|any(?:one|body))|(?:any(?:one|body)|some(?:one|body))\\s+(?:(?:here|around)\\s+)?(?:available|free|willing|able|down)\\s+to|who\\s+(?:can|could|would|will))"
+  + ")\\s+";
+const CHILD_TASK_RES = [
+  `${REQUEST_FOR_OTHER}${CHILD_CARE_VERB}\\b(?:\\W+(?!(?:to|with|at|for|from)\\b)\\w+){0,2}?\\W+(?:my|our|your|their|his|her)\\s+${CHILD_COUNT}${CHILD}(?!')`,
+  `${REQUEST_FOR_OTHER}(?:pick\\s+${CHILD_PICKUP}(?!')\\s+up|drop\\s+${CHILD_PICKUP}(?!')\\s+off)\\b`,
+  `\\b(?:find(?:ing)?|look(?:ing)?\\s+for|search(?:ing)?\\s+for|seek(?:ing)?|need(?:ing)?|want(?:ing)?)\\s+(?:a\\s+)?(?:baby[\\s-]?sitters?|nann(?:y|ies)|(?<!(?:dog|pet|cat|plant|house|bird|rabbit)\\s+)sitters?)\\b`,
+].map(p => new RegExp(p));
+const normalized = (text: string) => text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
 const riskCache = new WeakMap<EngineConfig, RegExp[]>();
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function riskMatchers(cfg: EngineConfig): RegExp[] {
@@ -390,7 +413,7 @@ function riskMatchers(cfg: EngineConfig): RegExp[] {
       // Whole words / phrases only (plural allowed; "-" or "_" may stand for a space).
       ...cfg.highRiskTerms.map(t => new RegExp(`\\b${escapeRe(t.toLowerCase().replace(/_/g, " ")).replace(/ /g, "[\\s-]+")}(s|es)?\\b`)),
       ...(cfg.highRiskPatterns ?? []).map(p => new RegExp(p)),
-      ...SAFETY_RISK_PATTERNS.map(p => new RegExp(p)),
+      ...SAFETY_RES,
     ];
     riskCache.set(cfg, rs);
   }
@@ -402,7 +425,7 @@ function riskMatchers(cfg: EngineConfig): RegExp[] {
  * kids" or "lend a hand" pass while "babysit my kids" or "lend me cash" do not.
  */
 export function riskTerms(cfg: EngineConfig, text: string): string[] {
-  const norm = text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
+  const norm = normalized(text);
   const out: string[] = [];
   for (const re of riskMatchers(cfg)) {
     const m = norm.match(re);
@@ -410,9 +433,13 @@ export function riskTerms(cfg: EngineConfig, text: string): string[] {
   }
   return out;
 }
+export function asksChildCare(text: string): boolean {
+  const norm = normalized(text);
+  return CHILD_TASK_RES.some(re => re.test(norm));
+}
 const HOME_RES = HOME_ENTRY_PATTERNS.map(p => new RegExp(p));
 export function isHomeEntry(cfg: EngineConfig, text: string): boolean {
-  const low = ` ${text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'")} `;
+  const low = ` ${normalized(text)} `;
   if (cfg.homeEntryTerms.some(t => low.includes(` ${t} `) || low.includes(` ${t}.`) || low.includes(` ${t},`))) return true;
   return HOME_RES.some(re => re.test(low));
 }
@@ -608,7 +635,7 @@ export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], 
   if (!mi) return "unknown_member";
   if (!(category !== undefined && teenCandidateIn(w, id, category)) && belowMatchAge(w, mi.m.age)) return "underage";
   const roster = others.filter(o => o !== id);
-  if (roster.length > 0 && rosterAgeReason(w, [id, ...roster], category !== undefined && teenFriendCategory(w.pack.id, category))) return "underage";
+  if (roster.length > 0 && rosterAgeReason(w, [id, ...roster], category !== undefined && teenFriendCategory(packAppOf(w), category))) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (mi.m.state === "paused") return "state_paused";
   if (optedOut?.(id)) return "opted_out";

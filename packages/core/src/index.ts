@@ -25,6 +25,7 @@ export { sharedDatingMarket } from "./generated/datingRadius.ts";
 export { temporaryPresenceWindow } from "./travel-presence.ts";
 export * from "./cities.ts";
 export * from "./smsCopy.ts";
+export * from "./redLines.ts";
 export * from "./venues.ts";
 export * from "./externalEvents.ts";
 export * from "./externalMatchmaker.ts";
@@ -62,3 +63,11 @@ export {
   type ContactExternalProspectInput, type ExternalSourcingTriggerInput, type InviteExternalProspectInput,
   type ProspectRetentionInput, type ReconsiderExternalProspectInput, type RouteMatchmakerPersonaInput,
 } from "./generated/externalMatchmaker.ts";
+export {
+  brandDefaultDomains, canEnableDomain, defaultDomainsForJoin, domainAllowedForAge, domainAllowsPhotos,
+  domainRequiresBusinessFirewall,
+  type Brand as MemberDomainBrand, type Domain as MemberDomain,
+} from "./generated/memberDomains.ts";
+export * from "./trajectory/index.ts";
+export * from "./analytics/index.ts";
+export * from "./pacing/index.ts";

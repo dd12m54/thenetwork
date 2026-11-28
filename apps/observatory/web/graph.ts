@@ -7,12 +7,34 @@ import { pickMember } from "./ui.tsx";
 interface Node extends SimulationNodeDatum { id: string; community: string; ax: number; ay: number; r: number }
 interface Link extends SimulationLinkDatum<Node> { type: string }
 
-/** A design-system color role that the canvas and the map draw with: a legend tone or one of the surface roles. */
-export type Ink = LegendTone | "foreground" | "background" | "border";
-/** The CSS variable of each ink, defined by the brand in packages/design-system. */
+export type Ink =
+  | LegendTone
+  | "foreground"
+  | "background"
+  | "border"
+  | "chart-1"
+  | "chart-2"
+  | "chart-3"
+  | "chart-4"
+  | "chart-5"
+  | "chart-6";
+
 const INK_VAR: Record<Ink, string> = {
-  primary: "--primary", ok: "--ok", warn: "--warn", destructive: "--destructive", muted: "--muted-foreground", accent: "--accent-foreground",
-  foreground: "--foreground", background: "--background", border: "--border",
+  primary: "--primary",
+  ok: "--ok",
+  warn: "--warn",
+  destructive: "--destructive",
+  muted: "--muted-foreground",
+  accent: "--accent-foreground",
+  foreground: "--foreground",
+  background: "--background",
+  border: "--border",
+  "chart-1": "--chart-1",
+  "chart-2": "--chart-2",
+  "chart-3": "--chart-3",
+  "chart-4": "--chart-4",
+  "chart-5": "--chart-5",
+  "chart-6": "--chart-6",
 };
 /** The resolved color of each ink, read from the document root at draw time. */
 export type Palette = Record<Ink, string>;
@@ -37,23 +59,20 @@ export const EDGE_STYLE: Record<(typeof EDGE_TYPES)[number], { ink: LegendTone; 
   avoid: { ink: "warn", alpha: 0.7, width: 1.2, dash: [3, 3] },
   blocked: { ink: "destructive", alpha: 0.65, width: 1, dash: [2, 2] },
 };
-/** The ink of an open opportunity in each state. The dash pattern also tells review from invitation. */
 export const OPP_INK: Record<string, Ink> = {
-  PROPOSED: "muted", IN_REVIEW: "muted", INVITING: "warn", PARTIALLY_ACCEPTED: "primary", MUTUALLY_ACCEPTED: "ok", QUORUM_MET: "ok", SCHEDULED: "ok",
+  PROPOSED: "muted", IN_REVIEW: "chart-2", INVITING: "warn", PARTIALLY_ACCEPTED: "primary", MUTUALLY_ACCEPTED: "ok", QUORUM_MET: "ok", SCHEDULED: "ok",
 };
-/** The ink of an opportunity: shadow runs in the foreground ink, the others by state. */
 export const oppInk = (o: ObsOpportunity): Ink => (o.source === "shadow" ? "foreground" : OPP_INK[o.state] ?? "muted");
 const STATE_PAINT: Record<string, Paint> = {
   open: { ink: "ok", alpha: 1 }, normal: { ink: "primary", alpha: 1 }, quiet: { ink: "muted", alpha: 1 }, receiving: { ink: "warn", alpha: 1 },
   paused: { ink: "muted", alpha: 0.5 }, opted_out: { ink: "destructive", alpha: 1 }, not_joined: { ink: "border", alpha: 1 },
 };
-const PULSE_INK = { good: "ok", bad: "destructive", warn: "warn", info: "primary" } as const satisfies Record<string, Ink>;
+export const PULSE_INK = { good: "ok", bad: "destructive", warn: "warn", info: "primary" } as const satisfies Record<string, Ink>;
 const ARCHETYPE_PAINT: Record<string, Paint> = {
-  regular: { ink: "primary", alpha: 1 }, busy_parent: { ink: "primary", alpha: 0.55 }, newcomer: { ink: "ok", alpha: 1 }, connector: { ink: "warn", alpha: 1 },
-  introvert: { ink: "muted", alpha: 1 }, very_active: { ink: "ok", alpha: 0.55 }, never_replies: { ink: "border", alpha: 1 }, traveler: { ink: "muted", alpha: 0.55 },
+  regular: { ink: "chart-1", alpha: 1 }, busy_parent: { ink: "chart-2", alpha: 1 }, newcomer: { ink: "chart-3", alpha: 1 }, connector: { ink: "chart-4", alpha: 1 },
+  introvert: { ink: "chart-5", alpha: 1 }, very_active: { ink: "chart-6", alpha: 1 }, never_replies: { ink: "muted", alpha: 1 }, traveler: { ink: "primary", alpha: 0.7 },
 };
-/** The paints that communities cycle through: four inks at two opacities. */
-const COMMUNITY_PAINTS: Paint[] = (["primary", "ok", "warn", "muted"] as const).flatMap(ink => [{ ink, alpha: 1 }, { ink, alpha: 0.5 }]);
+const COMMUNITY_PAINTS: Paint[] = (["chart-1", "chart-2", "chart-3", "chart-4", "chart-5", "chart-6"] as const).flatMap(ink => [{ ink, alpha: 1 }, { ink, alpha: 0.65 }]);
 
 /** A stable FNV-1a hash of a string. */
 export function hashOf(s: string): number { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
@@ -101,6 +120,7 @@ export class GraphView {
   private pulses: Pulse[] = [];
   private raf = 0;
   private lastBorough = "all";
+  private lastCity = store.selectedCity;
   private lastFocus = "";
   private ro: ResizeObserver;
   onHover?: (id: string | null, x: number, y: number) => void;
@@ -125,6 +145,12 @@ export class GraphView {
 
   private resize() {
     const r = this.canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    if (this.w && this.h) {
+      const dx = (r.width - this.w) / 2, dy = (r.height - this.h) / 2;
+      this.view.x += dx; this.view.y += dy;
+      if (this.drag) { this.drag.vx += dx; this.drag.vy += dy; }
+    }
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
     this.w = r.width; this.h = r.height;
     this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
@@ -180,8 +206,8 @@ export class GraphView {
     this.view = { k, x: this.w / 2 - n.x! * k, y: this.h / 2 - n.y! * k };
   }
 
-  /** Shown under the borough filter (the focus and the picks always are). */
-  private visible(id: string) { const m = store.members.get(id); return !!m && this.nodes.has(id) && (store.inBorough(m) || !!this.fs?.has(id)); }
+  /** Shown under the borough and domain filters (the focus and the picks always are). */
+  private visible(id: string) { const m = store.members.get(id); return !!m && this.nodes.has(id) && ((store.inBorough(m) && store.matchMemberDomain(m)) || !!this.fs?.has(id)); }
   /** The store's focus set, read once per frame. */
   private fs: Set<string> | null = null;
 
@@ -260,7 +286,11 @@ export class GraphView {
     this.raf = requestAnimationFrame(this.frame);
     this.syncGraph();
     this.fs = store.focusSet();
-    if (store.ui.filters.borough !== this.lastBorough) { this.lastBorough = store.ui.filters.borough; this.fit(); }
+    const cityChanged = store.selectedCity !== this.lastCity;
+    const zoneChanged = store.ui.filters.borough !== this.lastBorough;
+    this.lastCity = store.selectedCity;
+    this.lastBorough = store.ui.filters.borough;
+    if (cityChanged ? !store.ui.focus : zoneChanged) this.fit();
     const fk = store.ui.focus ? `${store.ui.focus.kind}:${store.ui.focus.id}` : "";
     if (fk !== this.lastFocus) {
       this.lastFocus = fk;
@@ -285,7 +315,7 @@ export class GraphView {
     const area = f?.kind === "neighborhood" ? f.id : null;
     const focusSet = this.fs ?? new Set<string>();
     const dimmed = focusSet.size > 0;
-    const bright = (m: ObsMember) => (!dimmed || focusSet.has(m.id)) && store.matchMemberFilter(m);
+    const bright = (m: ObsMember) => (!dimmed || focusSet.has(m.id)) && store.matchMemberFilter(m) && store.matchMemberDomain(m);
     const ink = readPalette();
     for (const [type, st] of Object.entries(EDGE_STYLE)) {
       if (!ui.edgeTypes[type]) continue;

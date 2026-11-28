@@ -51,6 +51,18 @@
 {"text":"Last Saturday was great, except Sunday.","answer":"unclear","keys":[]}
 {"text":"Last Saturday was great, anything except Sunday.","answer":"yes","keys":["a","b"]}
 {"text":"Last Saturday was great and neither works.","answer":"yes","keys":[]}
+{"text":"I had a great Saturday.","answer":"unclear","keys":[]}
+{"text":"We had a great Saturday.","answer":"unclear","keys":[]}
+{"text":"I had a great time Saturday.","answer":"unclear","keys":[]}
+{"text":"Yes, I had a great Saturday.","answer":"unclear","keys":[]}
+{"text":"I had a great Saturday, Sunday works.","answer":"yes","keys":["c"]}
+{"text":"I had a great Saturday and Sunday works.","answer":"yes","keys":["c"]}
+{"text":"I had a great Saturday, neither works.","answer":"yes","keys":[]}
+{"text":"I had a great Saturday, no thanks.","answer":"no","keys":[]}
+{"text":"I had Saturday in mind, Sunday works.","answer":"yes","keys":["b","c"]}
+{"text":"Saturday worked for me.","answer":"unclear","keys":[]}
+{"text":"Saturday worked for me, Sunday works.","answer":"yes","keys":["c"]}
+{"text":"It worked out, Saturday works.","answer":"yes","keys":["b"]}
 {"text":"both Saturday and Sunday","answer":"yes","keys":["b","c"]}
 {"text":"Saturday and Sunday both work","answer":"yes","keys":["b","c"]}
 {"text":"both Sat and Sun","answer":"yes","keys":["b","c"]}
@@ -357,3 +369,90 @@
 {"text":"Yes, Sunday neither works","answer":"yes","keys":["a","b"]}
 {"text":"Yes, Saturday and Sunday neither works","answer":"yes","keys":["a"]}
 {"text":"Sunday neither works","answer":"yes","keys":[]}
+{"text": "I'm busy Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy Thursday, but Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy Thursday. Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy on Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy Thursday and Sunday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm not free Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm unavailable Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm out Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm away Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm working Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I have plans Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "Thursday I'm busy, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "I'm busy Thursday, the weekend works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "Saturday works, I'm busy Thursday", "answer": "yes", "keys": ["b"]}
+{"text": "I'm not free Thursday", "answer": "unclear", "keys": []}
+{"text": "I'm out Thursday", "answer": "unclear", "keys": []}
+{"text": "I'm busy Thursday", "answer": "unclear", "keys": []}
+{"text": "We're busy Thursday, Saturday works", "answer": "yes", "keys": ["b"]}
+{"text": "If I'm busy Thursday, Saturday works", "answer": "unclear", "keys": []}
+{"text": "I'm free Thursday", "answer": "yes", "keys": ["a"]}
+{"text":"I'm working Thursday until 5, 7 works","answer":"yes","keys":["a"]}
+{"text":"I'm working Thursday until 5. 7 works","answer":"yes","keys":["a"]}
+{"text":"I'm working Sunday until noon, 2 works","answer":"yes","keys":["b","c"]}
+{"text":"I'm working Thursday if needed, Saturday works","answer":"unclear","keys":[]}
+{"text":"I'm working Thursday if possible, Saturday works","answer":"unclear","keys":[]}
+{"text": "anything but the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "any day but the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "every day but the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "any time but the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "everything except the weekend works", "answer": "yes", "keys": ["a"]}
+{"text": "everything works except the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "anything but the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "anything except the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "any day works except Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "every day works except Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "anything works except Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "any day works except Thursday", "answer": "yes", "keys": ["b", "c"]}
+{"text": "any day works but Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "anything except weekdays works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "everything but weekdays works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "all of them work except Sunday", "answer": "yes", "keys": ["a", "b"]}
+{"text": "any day but Thursday works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "every day works except the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "anything works but the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "any day works except the weekend", "answer": "yes", "keys": ["a"]}
+{"text": "anything but the morning works", "answer": "yes", "keys": ["a", "c"]}
+{"text": "the weekend works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "nothing but the weekend works", "answer": "yes", "keys": ["b", "c"]}
+{"text": "anything except the 2pm slot works", "answer": "yes", "keys": ["a", "b"]}
+{"text":"any day works but Sunday is best","answer":"yes","keys":["c"]}
+{"text":"anything works but the weekend is best","answer":"yes","keys":["b","c"]}
+{"text":"any day works but Saturday would be ideal","answer":"yes","keys":["b"]}
+{"text":"any day works but Sunday doesn't work","answer":"unclear","keys":[]}
+{"text":"any day works but Sunday is out","answer":"unclear","keys":[]}
+{"text":"Thursday doesn't work, Saturday works, Sunday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Thursday won't work, Saturday works, Sunday won't work","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work. Saturday works. Sunday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works, Sunday won't work","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works and Sunday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Thursday does not work, Saturday works, Sunday does not work","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works, Sunday doesn't work for me","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works, Sunday doesn't","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works, Sunday is out","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Sunday doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday works, Sunday doesn't work, Thursday doesn't work","answer":"yes","keys":["b"]}
+{"text":"No pressure Thursday works","answer":"yes","keys":["a"]}
+{"text":"No doubt Thursday works","answer":"yes","keys":["a"]}
+{"text":"No stress Saturday works","answer":"yes","keys":["b"]}
+{"text":"No biggie Sunday works","answer":"yes","keys":["c"]}
+{"text":"Sounds good, no pressure either","answer":"yes","keys":["a","b","c"]}
+{"text":"yes! no pressure on my side either","answer":"yes","keys":["a","b","c"]}
+{"text":"Count me in, no doubt either","answer":"yes","keys":["a","b","c"]}
+{"text":"No pressure Thursday doesn't work","answer":"unclear","keys":[]}
+{"text":"No, Thursday works","answer":"unclear","keys":[]}
+{"text":"No doubt, Saturday doesn't work, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Sunday around 2 works","answer":"yes","keys":["c"]}
+{"text":"Saturday around 2 works","answer":"unclear","keys":[]}
+{"text":"around 2 works","answer":"unclear","keys":[]}
+{"text":"Yes, Thursday works, I'm free after 2","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I can stay until 3","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I'm free before 3","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I can make it by 2","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I'm free till 3","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I'm free from 2","answer":"yes","keys":["a"]}
+{"text":"Yes, I'm free after 2","answer":"unclear","keys":[]}
+{"text":"after 2 works","answer":"unclear","keys":[]}
+{"text":"Yes, Thursday works, I can stay around 2 hours","answer":"yes","keys":["a"]}

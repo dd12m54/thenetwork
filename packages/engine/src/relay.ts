@@ -121,13 +121,16 @@ const MONEY = "(?:\\$\\s?\\d|\\bmoney\\b|\\bcash\\b|\\bfunds?\\b|\\bbucks\\b|\\b
 const APPS = "(?:whats ?app|telegram|signal|kik|hangouts|google chat|wechat|viber|snap(?:chat)?|insta(?:gram)?|ig|facebook|messenger|fb|discord|line app|skype|imessage)";
 const NUMWORD = "(?:a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|couple|few)";
 const SPELLED_AMT = `(?:${NUMWORD}[-\\s]+){1,3}(?:dollars?|bucks?|usd)`;
+const MONEY_NUMBER = "(?<![\\d.,])(?:\\d[\\d,]*(?:\\.\\d+)?|\\.\\d+)";
+const WEIGHT_VERB = "(?<!\\b(?:lose|lost|losing|gain|gained|gaining|weigh|weighs|weighed|weighing)\\s)";
+const MONEY_AMT = `(?:[$€£]\\s?${MONEY_NUMBER}|${MONEY_NUMBER}\\s?(?:[$€£]|(?:dollars?|bucks?|usd|euros?|eur|gbp|quid)\\b)|${WEIGHT_VERB}${MONEY_NUMBER}\\s?pounds?\\b(?!\\s+(?:of|heavier|lighter)\\b)|${SPELLED_AMT})`;
 
 const otherThreats = R("\\bi(?:'?ll| will| am going to|'?m gonna| gonna| m gonna)\\s+(?:kill|hurt|find|ruin|destroy|beat|end|stab|shoot|expose|leak|post)\\b|\\bi know where (?:you|u) (?:live|work|sleep)\\b|\\b(?:you|u)(?:'?ll| will) (?:regret|pay for)\\b|\\b(?:make|making) (?:you|u) (?:regret|pay|sorry)\\b|\\bwatch (?:your|ur) back\\b|\\b(?:you|u)(?:'d| had)? better (?:answer|reply|respond|show|text)\\b|\\b(?:i'?ll |i will )?(?:make sure|let) everyone know|\\b(?:wait|show up|be waiting|come by|turn up)\\s+(?:for (?:you|u) )?(?:outside|at) (?:your|ur) (?:work|office|home|place|apartment|building|job|door)\\b");
 
 export const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) => boolean }[] = [
   { code: "scam:money", re: R(`\\b${PAY}\\s+(?:me|us)\\b[^.?!]{0,50}${MONEY}`) },
   { code: "scam:money", re: R("\\b(?:can|could|would)\\s+(?:you|u)\\s+(?:please\\s+)?(?:help(?: me)?(?: out)?(?: with)?|cover|spot|lend|loan|pay(?: for)?)\\b[^.?!]{0,40}\\b(?:rent|bills?|fees?|ticket|flight|hospital|medical|money|cash|\\$|bucks|loan|deposit|customs|visa|tuition|phone bill|gas money)\\b") },
-  { code: "scam:money", re: R(`\\b(?:i|we)(?:\\s+(?:really\\s+|just\\s+)?(?:need|am short|are short|m short|owe)|'m short|'re short)\\b[^.?!]{0,30}(?:\\$\\s?\\d+|\\d+\\s?(?:dollars?|bucks?|usd)|${SPELLED_AMT}|\\bmoney\\b|\\bcash\\b)`) },
+  { code: "scam:money", re: R(`\\b(?:(?:i|we)(?:\\s+(?:really\\s+|just\\s+)?(?:need|am short|are short|m short|owe)|'m short|'re short)|im\\s+short)\\b[^.?!]{0,30}(?:${MONEY_AMT}|\\bmoney\\b|\\bcash\\b)`) },
   { code: "scam:money", re: R("\\b(?:western union|moneygram|wire transfer|bank (?:details|account|info|transfer)|routing number|account number)\\b|\\b(?:my|your|ur)\\s+(?:venmo|cash ?app|zelle|paypal)\\b") },
   { code: "scam:money", re: R("\\b(?:venmo|zelle|cash ?app|paypal|wire)\\s+(?:me|us)\\b|\\b(?:cover|help (?:me |us )?(?:with|pay(?:ing)?(?: for)?|cover)|pay(?:ing)? for)\\s+(?:my|our)\\s+(?:rent|bills?|phone bill|electric bill|flights?|tickets?|fees?|hospital bill|medical bills?|tuition|visa|car repair|leave|trip home)\\b|\\bneed (?:some )?help (?:paying|covering|with paying)\\b|\\b(?:receive|accept|cash|deposit)\\s+(?:a |some |the |my )?(?:transfer|check|cheque|payment|package|money|funds)\\s+for (?:me|us)\\b") },
   { code: "scam:gift_card", re: R("\\b(?:gift ?cards?|itunes cards?|apple (?:gift )?cards?|steam cards?|google play cards?|amazon cards?|card codes?|scratch (?:the|off) (?:back|code))\\b") },
@@ -135,7 +138,7 @@ export const RELAY_RULES: { code: string; re: RegExp; matches?: (text: string) =
   { code: "scam:crypto", re: R("\\b(?:invest|profit|returns?|deposit|earn|trading|teach you|show you|double)\\b[^.?!]{0,60}\\b(?:bitcoin|btc|ethereum|usdt|tether|crypto(?:currency)?|binance|coinbase|forex)\\b") },
   { code: "scam:investment", re: R("\\b(?:guaranteed (?:returns?|profits?)|investment (?:opportunity|platform|plan)|\\d+\\s?% (?:a |per |every )?(?:day|week|month|daily|weekly|monthly)|passive income|financial freedom|(?:uncle|aunt|mentor|cousin) (?:taught|showed) me (?:how )?to (?:trade|invest)|make money (?:fast|online|from home)|trading (?:platform|app|account|signals))\\b") },
   // Scam stories and asks in other words (generalised after the first held-out pass, docs/results/2026-10-09-relay.md section 3).
-  { code: "scam:money", re: R(`\\b(?:float|spot|front|lend|loan|advance)\\s+(?:me|us)\\s+(?:a (?:bit|little|few|couple|hundred|grand)|some|\\$|\\d|money|cash|the (?:money|cash|rest)|until|till|for)\\b|\\b(?:can'?t|cannot|unable to|not able to)\\s+(?:access|withdraw|get (?:to|at)|release|unlock)\\s+(?:my |our |the )?(?:funds|money|account|salary|savings|inheritance|paycheck)\\b|\\b(?:salary|paycheck|funds|account|card|money|inheritance|wallet)\\s+(?:is |was |got |has been |are |were )?(?:stuck|frozen|blocked|on hold|locked|seized|stolen)\\b|\\b(?:customs|clearance|release|processing|shipping|transfer|tax|delivery)\\s+fees?\\b|\\bhelp\\s+(?:me|us)\\s+(?:out\\s+)?(?:with|pay(?:ing)?|cover(?:ing)?)\\s+(?:the|my|our|a|this)\\s+(?:\\w+\\s+){0,2}(?:fee|fees|bill|bills|rent|deposit|fine)\\b|\\bneed\\s+(?:\\$\\s?\\d+|\\d+\\s?(?:dollars?|bucks?)|${SPELLED_AMT})\\b`) },
+  { code: "scam:money", re: R(`\\b(?:float|spot|front|lend|loan|advance)\\s+(?:me|us)\\s+(?:a (?:bit|little|few|couple|hundred|grand)|some|\\$|\\d|money|cash|the (?:money|cash|rest)|until|till|for)\\b|\\b(?:can'?t|cannot|unable to|not able to)\\s+(?:access|withdraw|get (?:to|at)|release|unlock)\\s+(?:my |our |the )?(?:funds|money|account|salary|savings|inheritance|paycheck)\\b|\\b(?:salary|paycheck|funds|account|card|money|inheritance|wallet)\\s+(?:is |was |got |has been |are |were )?(?:stuck|frozen|blocked|on hold|locked|seized|stolen)\\b|\\b(?:customs|clearance|release|processing|shipping|transfer|tax|delivery)\\s+fees?\\b|\\bhelp\\s+(?:me|us)\\s+(?:out\\s+)?(?:with|pay(?:ing)?|cover(?:ing)?)\\s+(?:the|my|our|a|this)\\s+(?:\\w+\\s+){0,2}(?:fee|fees|bill|bills|rent|deposit|fine)\\b|\\bneed\\s+${MONEY_AMT}`) },
   { code: "scam:check", re: R("\\b(?:deposit|cash)\\s+(?:it|this|the|my|a)\\s*(?:check|cheque)?\\b[^.?!]{0,60}\\b(?:send|wire|transfer|give)\\b[^.?!]{0,25}\\b(?:back|difference|rest|remainder)\\b|\\bsend (?:me )?back the (?:difference|rest|remainder|extra)\\b") },
   { code: "scam:investment", re: R("\\b(?:make|making|made|earn|earning|pull in|clear)\\s+(?:like\\s+|about\\s+)?\\$?\\d+(?:k|,\\d{3})?\\s+(?:a|per|every|each)\\s+(?:day|week|month)\\b|\\btrading\\s+(?:gold|forex|stocks|options|futures|silver|oil|crypto)\\b|\\breturns?\\s+(?:are|is|were|have been)\\s+(?:crazy|insane|huge|amazing|unreal|incredible|guaranteed)\\b|\\b(?:set|sign|get)\\s+(?:you|u)\\s+up\\b[^.?!]{0,40}\\b(?:account|platform|app|wallet|trading|invest)|\\bwith my (?:mentor|broker|financial advisor|account manager)\\b") },
   { code: "offplatform:app", re: R(`\\b(?:add|find|message|text|dm|hit|reach|talk|chat|follow|move|switch|continue|download|join|call)\\b[^.?!]{0,30}\\b(?:on|via|over|to|in)\\s+${APPS}\\b`) },
@@ -478,11 +481,12 @@ export function relayAffirmsIt(text: string): boolean {
   return RELAY_AFFIRMED_IT.test(text.replace(/[’‘`´]/g, "'"));
 }
 
+const CONTACT_ITEM_END = String.raw`(?!\s+(?!(?:number|address|info|information|details|to|with|and|or|so|because|please|pls|now|asap|too|also|again|tonight|today|tomorrow|later|soon|right|first|if|when|whenever|once|after|before|but|then|thanks|thank|he|she|they|i|we|you|it|as|in|on|at|for|by|via|unless|until|till|already|over|only|just|instead|every|each|any|anytime|this|next|since|ok|okay|lol|here|there|though)\b)\p{L})`;
 const CONTACT_REQ = new RegExp(
-  String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b`
+  String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b${CONTACT_ITEM_END}`
   + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`
   + String.raw`|${RELAY_AFFIRMED_SEND}(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
-  + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b`,
+  + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b${CONTACT_ITEM_END}`,
   "giu",
 );
 const PHOTO_REQ = new RegExp(
@@ -527,6 +531,10 @@ const SWAP_REFUSAL_VERB = /\b(?:refus(?:e|ed|ing)|declin(?:e|ed|ing))\s+(?:(?:to
 const TRANSFER = "send|share|give|pass|forward|text|disclose|reveal";
 const SWAP_MODAL_REFUSAL = new RegExp(SHARE_NEG.source + "\\s+(?:ever\\s+)?(?:" + TRANSFER + ")\\b");
 const REFUSES_MATCH_ACCESS = new RegExp("\\b(?:they|he|she)\\s+" + SHARE_NEG.source + "\\s+(?:have|get)\\b");
+const NEW_SWAP_VERB = "(?:withhold|withholds|withholding|withheld|withdraw|withdraws|withdrawing|withdrawn|withdrew|revoke|revokes|revoking|revoked)";
+const NEW_SWAP_OBJECT = `(?:my\\s+(?:${CONTACT_SWAP_NAME})|(?:my\\s+)?(?:consent|permission)\\s+to\\s+(?:${TRANSFER})\\s+my\\s+(?:${CONTACT_SWAP_NAME})|(?:number|numbers)\\s+swap|(?:the|that|our)\\s+(?:number\\s+)?swap|swapping\\s+numbers)`;
+const NEW_SWAP_FROM = `(?:withdraw|withdraws|withdrawing|withdrawn|withdrew)\\s+from\\s+(?:(?:this|that|it)\\s+and\\s+from\\s+)?(?:(?:the|that|our)\\s+(?:number\\s+)?swap|(?:number|numbers)\\s+swap|swapping\\s+numbers)`;
+const NEW_SWAP_WITHDRAWAL = new RegExp(`^\\s*(?:(?:actually|please|pls|no|never mind|nvm|sorry)\\s+)*(?:i(?:'m|'d|'ve)?\\s+(?:like\\s+to\\s+|want\\s+to\\s+|need\\s+to\\s+|am\\s+|have\\s+|had\\s+)?)?(?:${NEW_SWAP_VERB}\\s+${NEW_SWAP_OBJECT}|${NEW_SWAP_FROM})\\b`);
 const PENDING_SWAP_RECIPIENT = "(?:them|him|her|my (?:match|date))";
 const DIRECT_TRANSFER_REFUSAL = String.raw`(?:(?:don'?t|do\s+not)(?:\s+(?:want\s+(?:you\s+)?to|(?:you\s+)?dare))?|never|${SHARE_NEG.source})`;
 const DECLINES_PENDING_SEND = new RegExp(
@@ -713,7 +721,8 @@ const RENEW_PRIVATE_ITEM = new RegExp(String.raw`\bsend\s+(it|${CONTACT_RELAY_IT
 const PRIVATE_RELAY_COURTESY = /^(?:[,\s]+(?:now|please|pls|kindly|thanks|thank you|no (?:rush|worries|problem)))*\s*$/i;
 const FLEXIBLE_PRIVATE_TIMING = String.raw`whenever|any\s*time`;
 const RECURRING_PRIVATE_CONDITION = String.raw`${FLEXIBLE_PRIVATE_TIMING}|(?:(?:each\s+and\s+)?every(?:\s+single)?|each)\s*time`;
-const PRIVATE_CONDITION_MARKER = String.raw`if|when|${RECURRING_PRIVATE_CONDITION}|unless|once|after|until|provided|as\s+long\s+as|in\s+case`;
+const CONDITION_SUBJECT = String.raw`(?!(?:be|been|have|probably|definitely|also|really|just|not|never|i|we|you|u|it|going|able)\b)${OTHER}`;
+const PRIVATE_CONDITION_MARKER = String.raw`if|when|${RECURRING_PRIVATE_CONDITION}|unless|once|after|until|provided|as\s+long\s+as|in\s+case|in\s+the\s+event|on\s+(?:the\s+)?condition|subject\s+to|assuming|supposing|as\s+soon\s+as(?!\s+(?:you|u|possible)\b)|(?:should|were)\s+${CONDITION_SUBJECT}\s+(?=\p{L})`;
 const TRAILING_PRIVATE_CONDITION = new RegExp(
   String.raw`^[\s,:–—-]*(?:(?:and|but|now|please|kindly|pls|just|thanks)[\s,:–—-]+)*(?:(?:wait|hold(?:\s+(?:it|off|on))?)\s+(?=(?:until|till)\b))?(\(\s*)?((?:only\s+)?(?:${PRIVATE_CONDITION_MARKER}|till)\b.*)$`,
   "iu",
@@ -829,7 +838,7 @@ function refusesNumberSwap(text: string, clauses = relayClauses(text)): boolean 
   const pairedRefusal = text.split(RELAY_SENTENCE).some(sentence => PAIRED_CONTACT_REFUSAL.test(sentence));
   return pendingSwapWithdrawn(pairedRefusal, pairedRefusal, false) || clauses.some(clause => pendingSwapWithdrawn(
     OWN_SWAP_ITEM.test(clause),
-    SWAP_WITHHOLDING.test(clause) || SWAP_PROPERTY.test(clause) || SWAP_REFUSAL_VERB.test(clause)
+    SWAP_WITHHOLDING.test(clause) || NEW_SWAP_WITHDRAWAL.test(clause) || SWAP_PROPERTY.test(clause) || SWAP_REFUSAL_VERB.test(clause)
       || SWAP_MODAL_REFUSAL.test(clause) || REFUSES_MATCH_ACCESS.test(clause),
     DECLINES_PENDING_SEND.test(clause),
   ));
@@ -1106,7 +1115,6 @@ export function withdrawsRelaySwap(text: string): boolean {
   const payload = markedPayload ?? (label ? reportedPayload.slice(label[0].length) : undefined);
   if (payload !== undefined) {
     const quotation = payload.match(RELAY_QUOTATION)?.[0];
-    // An unquoted literal payload extends to the end of the turn.
     if (!quotation || !payload.startsWith(quotation) || quotation.length < 2 || quotation[0] !== quotation.at(-1)) return false;
   }
   const own = normalized.replace(RELAY_QUOTATION, quotedRelaySeparator).toLowerCase();
@@ -1210,13 +1218,15 @@ function evaluatePrivateRequest(
   const clauses = relayClauses(low);
   const question = relayIsIndirectQuestion(spoken.endsWith("?"), /^(?:please\s+)?(?:can|could|would)\s+(?:you|u)\b/i.test(spoken),
     privateModal?.[0].length === privateRequest.index, /^(?:should|would\s+it|could\s+i|is it|do you|can i)\b/i.test(spoken));
+  const statementQuestion = !!/^[^.!?;…\n]*[.!?;…\n]*/u.exec(spoken.slice(privateRequest.index! + privateRequest[0].length))![0].includes("?")
+    && !/\b(?:can|could|would|will)\s+(?:you|u)\b/i.test(relayClauseLead(spoken.slice(0, privateRequest.index)));
   const priorCondition = priorSentenceConditionsShare(t.slice(start, start + privateRequest.index!), privateRequest, contact);
   const envelopeCondition = !!envelope.independentNumber && envelope.ordinaryText !== undefined
     && priorSentenceConditionsShare(envelope.ordinaryText.body + ".", privateRequest, true, true);
   const uncertain = !!envelope.leadingCondition || HEDGE.test(low) || privateRelayTimingIsUncertain(spoken, envelope.ordinaryBody) || uncertainPrivateTransfer(clauses)
     || envelopeCondition
     || conditionsPrivateRequest(own.slice(start), t.slice(start), privateRequest.index! + privateRequest[0].length, privateRequest, contact)
-    || question || privateShareQualified(spoken, privateRequest)
+    || question || statementQuestion || privateShareQualified(spoken, privateRequest)
     || priorCondition;
   // spec/relayDecision.md, "A refusal or uncertainty cannot authorize a private item"
   const refused = refusesPrivateItem(low, contact ? PHOTO_ITEM_REFUSAL : CONTACT_ITEM_REFUSAL)

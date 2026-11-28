@@ -8,7 +8,7 @@ import {svcSign} from "../../core/src/svc/svc-auth.ts";
 import {TURN_PATH,RELAY_PATH,type RelaySendRequest,type TurnRequest} from "../../core/src/svc/contract.ts";
 import {DryRunAdapter} from "../service/channel.ts";
 import {NetworkService} from "../service/service.ts";
-import {simulatedRelayClassifier} from "../../engine/src/relay.ts";
+import {simulatedRelayClassifier, withdrawsRelaySwap} from "../../engine/src/relay.ts";
 import {ServiceClient} from "../../../apps/observatory/src/sources/service.ts";
 import type {NetworkState} from "../src/network.ts";
 
@@ -348,6 +348,11 @@ test.each([
   "Send him my number. Let me think it over first.",
   "Send him my number. Hmm idk.",
   "Send him my number. Lol nevermind he's weird.",
+  "Give him my number, should he ask.",
+  "Give Ari my number should Ari ask.",
+  "Give him my number in the event that he asks.",
+  "Give him my number, assuming he asks.",
+  "Give him my number as soon as he asks.",
 ])("a trailing condition cannot arm or complete a signed number swap: %s", async text => {
   const id = "conditional-swap-" + randomUUID();
   await resetSwapMatch(id);
@@ -455,6 +460,11 @@ test.each([
   "My number is off limits, send Ari my number",
   "I can't believe it, “send Ari my number”",
   "I would not send Ari my number. I can still make Saturday.",
+  "Give Ari my phone charger",
+  "Give Ari my email password",
+  "He can have my number one spot in line",
+  "He can have my number?",
+  "She can have my phone number, please?",
 ])("the relay does not send a private item after %s", async (text) => {
   const id = "refused-share-" + randomUUID();
   const before = await sharesQueued();
@@ -493,6 +503,10 @@ test.each([
   "Ana says, if you need to, send it now. Don't send it anymore.",
   "Ana says, if it's urgent, send it now; Don't send it anymore.",
   "Ana says, “don't send it now.” Don't send it anymore",
+  "Withhold my number",
+  "Withdraw my number",
+  "Revoke my consent to share my number",
+  "I revoked my consent to share my number",
 ])("the signed turn withdraws a pending swap after %s", async (text) => {
   const id = "withdrawn-swap-" + randomUUID();
   const before = await sharesQueued();
@@ -503,6 +517,27 @@ test.each([
   expect({ pending, action, newShares: await sharesQueued() - before })
     .toMatchObject({ pending: 0, action: { decision: "hold", delivered: false }, newShares: 0 });
 }, 60_000);
+
+test("new swap verbs withdraw only their own swap object", () => {
+  for (const text of [
+    "Withhold my number",
+    "Withdraw my number",
+    "Revoke my consent to share my number",
+    "I revoked my consent to share my number",
+    "I'd like to withdraw from the number swap",
+    "No thanks, I'm withdrawing from this and from swapping numbers",
+    "No, withhold my number",
+    "No, I revoke the number swap",
+  ]) expect(withdrawsRelaySwap(text)).toBe(true);
+  for (const text of [
+    "The bank revoked my card so text me at my number later",
+    "Revoking my gym membership has nothing to do with swapping numbers",
+    "He withdrew his complaint so swapping numbers is fine now",
+    "He withdrew my number",
+    "withdraw it",
+    "revoke my consent",
+  ]) expect(withdrawsRelaySwap(text)).toBe(false);
+});
 
 test.each([
   "I won't lie, send Ari my number",
@@ -1036,6 +1071,13 @@ test.each([
   { label: "grouped measurement", body: "I'm almost 15,000 feet away", minor: false },
   { label: "measurement beside genuine youth estimate", body: "I'm turning 16.5 degrees, but I'm almost 18.", minor: true, incomingAge: 17 },
   { label: "grade followed by teacher attribution", body: "I'm in seventh grade, as a teacher told me.", minor: true, incomingAge: 13 },
+  { label: "near birthday tomorrow on TURN", body: "I turn 18 tomorrow", minor: true, incomingAge: 17 },
+  { label: "near birthday tomorrow will-be on TURN", body: "I'll be 18 tomorrow", minor: true, incomingAge: 17 },
+  { label: "near birthday tonight will-be on TURN", body: "I'll be 18 tonight", minor: true, incomingAge: 17 },
+  { label: "short birthday tomorrow", body: "18 tomorrow", minor: true },
+  { label: "short birthday tonight", body: "18 tonight", minor: true },
+  { label: "quoted birthday tomorrow", body: 'She said "I turn 18 tomorrow".', minor: false },
+  { label: "hypothetical birthday tomorrow", body: "What if I turn 18 tomorrow?", minor: false },
   { label: "short birthday today", body: "turning 18 today", minor: true },
   { label: "short birthday this month", body: "turning 18 this month", minor: true },
   { label: "measurement in miles", body: "I'm almost 150 miles away.", minor: false },
@@ -1064,10 +1106,13 @@ test.each([
   { label: "quoted spelled grader", body: 'She said "I\'m a tenth grader".', minor: false },
   { label: "adult elementary teacher", body: "I'm in 5th grade as a teacher.", minor: false },
 ])("signed TURN and relay classify age at their own boundary: $label", async ({ label, body, minor, incomingAge }) => {
+  if (new Date(clock.now()).getUTCHours() < 14) {
+    clock.set(Math.floor(clock.now() / DAY) * DAY + 14 * HOUR);
+  }
   const id = "relay-age-estimate-" + randomUUID();
   const pair = ++ageEstimatePair;
-  const senderPhone = "+12125550" + (100 + 2 * pair);
-  const recipientPhone = "+12125550" + (101 + 2 * pair);
+  const senderPhone = "+1917555" + (2000 + 2 * pair);
+  const recipientPhone = "+1917555" + (2001 + 2 * pair);
   await enrollRelayMember(senderPhone, "Ari, 29", id + "-ari");
   await enrollRelayMember(recipientPhone, "Bo, 29", id + "-bo");
   const sender = await open(senderPhone, id + "-ari-open"), recipient = await open(recipientPhone, id + "-bo-open");
